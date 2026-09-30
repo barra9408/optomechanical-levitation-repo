@@ -1,0 +1,2 @@
+long_axis_nm,step_nm,n_dipoles,aspect_ratio,theoretical_freq_kHz,simulation_freq_kHz,relative_difference_pct
+64.47368421052632,1.2894736842105263,6229,4.0,5376.838598338884,4891.522030156141,9.026057957787247

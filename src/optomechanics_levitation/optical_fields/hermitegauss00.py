@@ -43,6 +43,9 @@ def hermite_gauss_00(pos, env_dict, wavelength, theta=0, polarization_state=None
     envelope = np.exp(-(focal_length_nm * sin_theta / entrance_waist_nm)**2) * np.sqrt(cos_theta) * sin_theta
 
     component = "E" if returnField.lower() == "e" else "H"
+    if component == "H":
+        px *= kSign
+        py *= -kSign
     if component == "E":
         angular_0 = transmission_te + transmission_tm * cos_theta_3
         angular_1 = transmission_tm * sin_theta_3

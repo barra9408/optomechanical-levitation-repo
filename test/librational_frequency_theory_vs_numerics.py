@@ -75,7 +75,7 @@ def theoretical_librational_frequency(long_axis_nm, aspect_ratio, peak_efield, d
     return angular_frequency / (2 * np.pi * 1e3)
 
 
-def numerical_librational_frequency(long_axis_nm, aspect_ratio, step_nm, density, equilibrium_z_nm, hermitegauss_params, n_theta=24, n_phi=48):
+def numerical_librational_frequency(long_axis_nm, aspect_ratio, step_nm, density, equilibrium_z_nm, hermitegauss_params, n_theta=65, n_phi=128):
     print("[NUMERICAL 1/4] Building the particle...", flush=True)
     long_radius_nm = long_axis_nm / 2
     short_radius_nm = long_radius_nm / aspect_ratio
@@ -181,7 +181,7 @@ def main():
     start = perf_counter()
     case_id = int(os.environ.get("SLURM_ARRAY_TASK_ID", "0"))
     aspect_ratio, long_axis_nm = cases[case_id]
-    step_nm = long_axis_nm / (12.5 * aspect_ratio)
+    step_nm = long_axis_nm / (35.0 if aspect_ratio == 2.0 else 60.0)
 
     print("=" * 70, flush=True)
     print(f"CASE {case_id + 1}/{len(cases)} | aspect ratio = {aspect_ratio:g} | long axis = {long_axis_nm:.6f} nm", flush=True)

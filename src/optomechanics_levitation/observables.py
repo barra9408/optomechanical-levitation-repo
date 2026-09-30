@@ -9,7 +9,7 @@ def maxwell_stress_tensor(electric_field, magnetic_field, permittivity=epsilon_0
 
 def spherical_integration_surface(geometry_nm, step_nm, n_theta, n_phi):
     center_nm = np.mean(geometry_nm, axis=0)
-    radius_nm = np.max(np.linalg.norm(geometry_nm - center_nm, axis=1)) + 2 * step_nm
+    radius_nm = np.max(np.linalg.norm(geometry_nm - center_nm, axis=1)) + 4 * step_nm
 
     theta = (np.arange(n_theta) + 0.5) * np.pi / n_theta
     phi = np.arange(n_phi) * 2 * np.pi / n_phi

@@ -1,5 +1,5 @@
 import numpy as np
-from scipy.constants import epsilon_0, mu_0
+from scipy.constants import epsilon_0, mu_0, c, hbar
 
 def maxwell_stress_tensor(electric_field, magnetic_field, permittivity=epsilon_0, permeability=mu_0):
     electric_term = permittivity * np.einsum("...i,...j->...ij", electric_field, np.conj(electric_field))
@@ -29,3 +29,5 @@ def evaluate_torque(stress_interaction, positions_nm, normals, area_m2, center_n
     traction = np.einsum("nij,nj->ni", stress_interaction, normals)
     position_vectors_m = (positions_nm - center_nm) * 1e-9
     return np.sum(np.cross(position_vectors_m, traction) * area_m2[:, None], axis=0)
+
+############################## RECOIL HEATING ########################################

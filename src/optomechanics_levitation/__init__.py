@@ -18,6 +18,6 @@ __all__ = [
     "maxwell_stress_tensor",
     "spherical_integration_surface",
     "evaluate_force",
-    "evaluate_torque"
+    "evaluate_torque",
     "hermite_gauss_00",
 ]

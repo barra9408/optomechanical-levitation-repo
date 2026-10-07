@@ -1,0 +1,2 @@
+orientation,rotation,long_axis_nm,step_nm,n_dipoles,aspect_ratio,stiffness_Nm_per_rad,simulation_frequency_kHz,orbital_channel_N2m2_per_Hz,spin_channel_N2m2_per_Hz,total_torque_noise_N2m2_per_Hz,librational_heating_rate_per_s
+X,Y,222.70324872557907,3.711720812092985,10591,4.0,2.0239124482634291e-19,1564.225925382466,9.626321532897875e-56,4.281745252616176e-56,1.390806678551405e-55,201200.05979273544

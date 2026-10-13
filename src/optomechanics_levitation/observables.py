@@ -1,5 +1,7 @@
 import numpy as np
 from scipy.constants import epsilon_0, mu_0, c, hbar
+from pyGDM2 import fields
+from .particle import rotate_particle
 from .incident_field import evaluate_incident_field
 from .light_matter_interaction import evaluate_internal_field, evaluate_far_field
 
@@ -32,21 +34,80 @@ def evaluate_torque(stress_interaction, positions_nm, normals, area_m2, center_n
     position_vectors_m = (positions_nm - center_nm) * 1e-9
     return np.sum(np.cross(position_vectors_m, traction) * area_m2[:, None], axis=0)
 
-############################## RECOIL HEATING ########################################
+############################## RECOIL HEATING FROM ORIENTATION DERIVATIVE ########################################
+def derivative_torque_spectral_density(particle, field_generator, incident_parameters, far_field_distance=1e6, rotation_axes=("y", "z"), angle_rad=0.005):
+    """Return Gamma_sc, D and S_tau_tau from finite orientation derivatives.
 
-def _mean_scattering_rate(dI_sc, omega, r):
-    return epsilon_0 * c * r**2 * np.sum(dI_sc) / (2 * hbar * omega)
+    Distances and wavelength are in nm; angle_rad is in radians. The returned
+    D and S_tau_tau are dictionaries indexed by the requested rotation axes.
+    """
+    wavelength = incident_parameters["wavelength_nm"]
+    environment = incident_parameters["environment"]
 
-def _total_differential_fields(scattering_field, incident_field, domega_sc, domega_in):
-    dI_sc = np.sum(np.abs(scattering_field)**2, axis=-1) * domega_sc
-    dI_in = np.sum(np.abs(incident_field)**2, axis=-1) * domega_in
-    I_in = np.sum(dI_in)
-    I_tilde = np.sum(dI_sc) / I_in
-    return I_tilde, dI_sc, dI_in
+    theta = (np.arange(64) + 0.5) * np.pi / 64
+    phi = np.linspace(0, 2 * np.pi, 64, endpoint=False)
+    theta_grid, phi_grid = np.meshgrid(theta, phi, indexing="ij")
+    directions = np.column_stack(((np.sin(theta_grid) * np.cos(phi_grid)).ravel(), (np.sin(theta_grid) * np.sin(phi_grid)).ravel(), np.cos(theta_grid).ravel()))
+    observation_points = far_field_distance * directions
+
+    geometry = particle["geometry_nm"]
+    rotation_origin = geometry.mean(axis=0)
+
+    def scattering_rate(scattered_field):
+        field_squared = np.sum(np.abs(scattered_field)**2, axis=1)
+        field_squared = field_squared.reshape(len(theta), len(phi))
+
+        dtheta = theta[1] - theta[0]
+        dphi = phi[1] - phi[0]
+        integral = np.sum(field_squared * np.sin(theta)[:, None]) * dtheta * dphi
+
+        radius_m = far_field_distance * 1e-9
+        omega = 2 * np.pi * c / (wavelength * 1e-9)
+        P_sc = epsilon_0 * c * radius_m**2 * integral / 2
+
+        return P_sc / (hbar * omega)
+
+    def scattered_field_at(axis=None, rotation_rad=0.0):
+        oriented_particle = particle.copy()
+
+        if axis is not None:
+            angles_deg = np.zeros(3)
+            angles_deg["xyz".index(axis)] = np.degrees(rotation_rad)
+            oriented_particle["geometry_nm"] = rotate_particle(geometry, angles_deg, origin_nm=rotation_origin)
+
+        incident_field = evaluate_incident_field(field_generator=field_generator, positions_nm=oriented_particle["geometry_nm"],
+                                                 field="E", **incident_parameters)
+        interaction = evaluate_internal_field(particle=oriented_particle, incident_electric_field=incident_field,
+                                              wavelength_nm=wavelength, environment=environment)
+
+        return evaluate_far_field(interaction_result=interaction, positions_nm=observation_points, field="E")
+
+    scattered_field = scattered_field_at()
+    Gamma_sc = scattering_rate(scattered_field)
+
+    D = {}
+    S_tau_tau = {}
+    for axis in rotation_axes:
+        field_plus = scattered_field_at(axis, +angle_rad)
+        field_minus = scattered_field_at(axis, -angle_rad)
+        field_derivative = (field_plus - field_minus) / (2 * angle_rad)
+
+        gamma_derivative = scattering_rate(field_derivative)
+        D[axis] = gamma_derivative / Gamma_sc
+        S_tau_tau[axis] = hbar**2 * gamma_derivative / (2 * np.pi)
+
+    return Gamma_sc, D, S_tau_tau
+
+
+
+############################## RECOIL HEATING FROM ANGULAR SPECTRUM ########################################
 
 def _direction_axis_projection(directions, axis):
     axis_index = {"x": 0, "y": 1, "z": 2}[axis.lower()]
     return np.asarray(directions)[..., axis_index]
+
+def _axis_vector(axis):
+    return np.eye(3)[{"x": 0, "y": 1, "z": 2}[axis.lower()]]
 
 def _angular_surface(interaction_result, axis, radius_wavelengths, n_theta, n_phi):
     prepared = interaction_result["prepared_interaction"]
@@ -70,50 +131,53 @@ def _far_field_on_surface(interaction_result, positions_nm, grid_shape, chunk_si
         field[start:stop] = evaluate_far_field(interaction_result, positions_nm[start:stop], field="E")
     return field.reshape(*grid_shape, 3)
 
-def _plane_wave_angular_spectrum(field_generator, incident_parameters, center_nm, axis):
-    """Represent a plane wave and its angular-momentum-weighted field."""
-    direction = np.asarray(incident_parameters["direction"], dtype=float)
-    direction = direction / np.linalg.norm(direction)
-    axis_vector = np.eye(3)[{"x": 0, "y": 1, "z": 2}[axis.lower()]]
+def _rotate_about_axis(vector, axis_vector, angle):
+    return (np.cos(angle) * vector + np.sin(angle) * np.cross(axis_vector, vector)
+            + (1 - np.cos(angle)) * axis_vector * np.sum(vector * axis_vector, axis=-1, keepdims=True))
+
+def _plane_wave_spectrum(field_generator, incident_parameters, center_nm, axis, direction):
+    """A plane wave is an angular delta; rotated deltas represent its derivative."""
+    direction = np.asarray(direction, dtype=float)
+    direction /= np.linalg.norm(direction)
+    axis_vector = _axis_vector(axis)
     amplitude = evaluate_incident_field(field_generator, np.asarray(center_nm)[None, :], field="E", **incident_parameters)[0]
-    spin = np.dot(direction, axis_vector) * 1j * np.cross(direction, amplitude)
-
     angle = 1e-3
-    def rotate(vector, angle):
-        return (np.cos(angle) * vector + np.sin(angle) * np.cross(axis_vector, vector)
-                + (1 - np.cos(angle)) * axis_vector * np.dot(axis_vector, vector))
+    directions = np.array([direction, _rotate_about_axis(direction, axis_vector, -angle),
+                           _rotate_about_axis(direction, axis_vector, angle)])
+    amplitudes = np.zeros((3, 3), dtype=complex)
+    amplitudes[0] = amplitude
 
-    directions = np.array([direction, rotate(direction, -angle), rotate(direction, angle)])
-    wavevectors = 2 * np.pi / incident_parameters["wavelength_nm"] * directions
-    coefficients = np.zeros((3, 3), dtype=complex)
-    force_coefficients = coefficients.copy()
-    spin_coefficients = coefficients.copy()
-    orbital_coefficients = coefficients.copy()
+    # d/dphi = e_axis x A - d/d(angle)[R(angle) A(R(-angle) n)].
+    azimuthal_derivative = np.zeros_like(amplitudes)
+    azimuthal_derivative[0] = np.cross(axis_vector, amplitude)
+    azimuthal_derivative[1] = _rotate_about_axis(amplitude, axis_vector, -angle) / (2 * angle)
+    azimuthal_derivative[2] = -_rotate_about_axis(amplitude, axis_vector, angle) / (2 * angle)
+    return {"directions": directions, "wavevectors_nm": 2 * np.pi / incident_parameters["wavelength_nm"] * directions,
+            "origin_nm": np.asarray(center_nm), "amplitudes": amplitudes,
+            "azimuthal_derivative": azimuthal_derivative}
 
-    # The rotated modes act only in J_in; they carry no incident intensity.
-    coefficients[0] = amplitude
-    force_coefficients[0] = np.dot(direction, axis_vector) * amplitude
-    spin_coefficients[0] = spin
-    orbital_coefficients[0] = -spin
-    orbital_coefficients[1] = rotate(amplitude, -angle) / (2j * angle)
-    orbital_coefficients[2] = -rotate(amplitude, angle) / (2j * angle)
+def _angular_spectrum_from_field(field_generator, incident_parameters, center_nm, axis, input_grid, input_span_wavelengths):
+    """Forward 2-D Fourier transform of E into complex, transverse angular amplitudes.
 
-    return (directions, np.ones(3), wavevectors, np.asarray(center_nm), coefficients,
-            force_coefficients, spin_coefficients, orbital_coefficients)
-
-def _incident_angular_spectrum(field_generator, incident_parameters, center_nm, axis, input_grid, input_span_wavelengths):
-    """Angular amplitudes from an explicit plane wave or a two-plane Fourier grid.
-
-    Each Fourier coefficient includes its angular cell weight. Both propagation
-    signs are retained; only propagating components enter the angular integrals.
+    amplitudes[j] contains A(n_j) dOmega_j. Two planes separate the +z and
+    -z waves; dOmega = dkx dky / (k |kz|). Plane-wave deltas are kept exact.
     """
-    if "direction" in incident_parameters and "helicity" in incident_parameters:
-        return _plane_wave_angular_spectrum(field_generator, incident_parameters, center_nm, axis)
+    if "direction" in incident_parameters:
+        return _plane_wave_spectrum(field_generator, incident_parameters, center_nm, axis, incident_parameters["direction"])
+
+    environment = incident_parameters["environment"]
+    if field_generator is fields.plane_wave and np.allclose(
+            [environment[key] for key in ("eps1", "eps2", "eps3")], environment["eps2"]):
+        angle = np.deg2rad(incident_parameters.get("inc_angle", 180.0))
+        direction = np.array([0.0, 0.0, np.cos(angle)])
+        transverse_axis = 1 if incident_parameters.get("inc_plane", "xz").lower() in ("yz", "zy") else 0
+        direction[transverse_axis] = -np.sin(angle)
+        return _plane_wave_spectrum(field_generator, incident_parameters, center_nm, axis, direction)
 
     wavelength_nm = incident_parameters["wavelength_nm"]
     size_nm = input_span_wavelengths * wavelength_nm
     step_nm = size_nm / input_grid
-    start_xy = np.asarray(center_nm[:2]) - size_nm / 2
+    start_xy = np.asarray(center_nm[:2]) - (input_grid // 2) * step_nm
     offsets = np.arange(input_grid) * step_nm
     X, Y = np.meshgrid(start_xy[0] + offsets, start_xy[1] + offsets, indexing="ij")
     z0 = center_nm[2]
@@ -121,33 +185,29 @@ def _incident_angular_spectrum(field_generator, incident_parameters, center_nm, 
     sample_positions = np.stack((X, Y, np.full_like(X, z0)), axis=-1).reshape(-1, 3)
     upper_positions = sample_positions.copy()
     upper_positions[:, 2] += dz
-    fields = []
+    plane_spectra = []
     for positions in (sample_positions, upper_positions):
         field = evaluate_incident_field(field_generator=field_generator, positions_nm=positions, field="E", **incident_parameters)
-        fields.append(np.fft.fftshift(np.fft.fft2(field.reshape(input_grid, input_grid, 3), axes=(0, 1)), axes=(0, 1)) / input_grid**2)
+        centered_field = np.fft.ifftshift(field.reshape(input_grid, input_grid, 3), axes=(0, 1))
+        plane_spectra.append(np.fft.fftshift(np.fft.fft2(centered_field, axes=(0, 1)), axes=(0, 1)) / input_grid**2)
 
     k = 2 * np.pi / wavelength_nm
     kxy = 2 * np.pi * np.fft.fftshift(np.fft.fftfreq(input_grid, d=step_nm))
     Kx, Ky = np.meshgrid(kxy, kxy, indexing="ij")
     Kz = np.sqrt(np.maximum(k**2 - Kx**2 - Ky**2, 0))
-    propagating = Kz > 0.05 * k
+    propagating = Kz > 0
     phase = np.exp(-1j * Kz * dz)
     denominator = np.where(propagating, 2j * np.sin(Kz * dz), 1)
-    positive = (fields[1] - fields[0] * phase[..., None]) / denominator[..., None]
-    negative = fields[0] - positive
+    positive = (plane_spectra[1] - plane_spectra[0] * phase[..., None]) / denominator[..., None]
+    negative = plane_spectra[0] - positive
     positive[~propagating] = 0
     negative[~propagating] = 0
     solid_angle = (2 * np.pi / size_nm)**2 / (k * np.where(propagating, Kz, 1))
 
-    coefficients = []
-    force_coefficients = []
-    spin_coefficients = []
-    orbital_coefficients = []
-    wavevectors = []
     directions = []
-    weights = []
+    amplitudes = []
+    azimuthal_derivatives = []
     axis_index = {"x": 0, "y": 1, "z": 2}[axis.lower()]
-    axis_vector = np.eye(3)[axis_index]
     for sign, amplitude in ((1, positive), (-1, negative)):
         direction = np.stack((Kx / k, Ky / k, sign * Kz / k), axis=-1)
         amplitude = amplitude - direction * np.sum(direction * amplitude, axis=-1, keepdims=True)
@@ -155,112 +215,120 @@ def _incident_angular_spectrum(field_generator, incident_parameters, center_nm, 
         derivative_x = np.gradient(density, kxy[1] - kxy[0], axis=0)
         derivative_y = np.gradient(density, kxy[1] - kxy[0], axis=1)
         if axis_index == 0:
-            orbital = 1j * sign * Kz[..., None] * derivative_y
+            azimuthal_derivative = -sign * Kz[..., None] * derivative_y
         elif axis_index == 1:
-            orbital = -1j * sign * Kz[..., None] * derivative_x
+            azimuthal_derivative = sign * Kz[..., None] * derivative_x
         else:
-            orbital = -1j * (Kx[..., None] * derivative_y - Ky[..., None] * derivative_x)
-        orbital *= solid_angle[..., None]
-        projection = _direction_axis_projection(direction, axis)
-        force = projection[..., None] * amplitude
-        spin = projection[..., None] * 1j * np.cross(direction, amplitude)
-        orbital += 1j * np.cross(axis_vector, amplitude) - spin
-        coefficients.append(amplitude[propagating])
-        force_coefficients.append(force[propagating])
-        spin_coefficients.append(spin[propagating])
-        orbital_coefficients.append(orbital[propagating])
-        wavevectors.append((k * direction)[propagating])
+            azimuthal_derivative = -Ky[..., None] * derivative_x + Kx[..., None] * derivative_y
         directions.append(direction[propagating])
-        weights.append(solid_angle[propagating])
+        amplitudes.append(amplitude[propagating])
+        azimuthal_derivatives.append((azimuthal_derivative * solid_angle[..., None])[propagating])
 
-    coefficients = np.concatenate(coefficients)
-    force_coefficients = np.concatenate(force_coefficients)
-    spin_coefficients = np.concatenate(spin_coefficients)
-    orbital_coefficients = np.concatenate(orbital_coefficients)
-    wavevectors = np.concatenate(wavevectors)
     directions = np.concatenate(directions)
-    weights = np.concatenate(weights)
-    active = np.maximum.reduce((np.linalg.norm(coefficients, axis=-1), np.linalg.norm(force_coefficients, axis=-1), np.linalg.norm(spin_coefficients, axis=-1), np.linalg.norm(orbital_coefficients, axis=-1)))
+    amplitudes = np.concatenate(amplitudes)
+    azimuthal_derivatives = np.concatenate(azimuthal_derivatives)
+    active = np.maximum(np.linalg.norm(amplitudes, axis=-1), np.linalg.norm(azimuthal_derivatives, axis=-1))
     active = active > np.max(active) * 1e-10
-    origin_nm = np.array([*start_xy, z0])
-    return directions[active], weights[active], wavevectors[active], origin_nm, coefficients[active], force_coefficients[active], spin_coefficients[active], orbital_coefficients[active]
+    directions = directions[active]
+    return {"directions": directions, "wavevectors_nm": k * directions,
+            "origin_nm": np.asarray(center_nm), "amplitudes": amplitudes[active],
+            "azimuthal_derivative": azimuthal_derivatives[active]}
 
-def _field_from_spectrum(positions_nm, wavevectors, origin_nm, coefficients, chunk_size):
+def _field_from_angular_spectrum(positions_nm, spectrum, amplitudes, chunk_size):
+    """Inverse angular transform at the particle dipoles."""
     field = np.zeros((len(positions_nm), 3), dtype=complex)
-    relative_positions = positions_nm - origin_nm
-    for start in range(0, len(wavevectors), chunk_size):
-        stop = min(start + chunk_size, len(wavevectors))
-        phase = np.exp(1j * relative_positions @ wavevectors[start:stop].T)
-        field += phase @ coefficients[start:stop]
+    relative_positions = positions_nm - spectrum["origin_nm"]
+    for start in range(0, len(amplitudes), chunk_size):
+        stop = min(start + chunk_size, len(amplitudes))
+        phase = np.exp(1j * relative_positions @ spectrum["wavevectors_nm"][start:stop].T)
+        field += phase @ amplitudes[start:stop]
     return field
 
-def _weighted_scattering(interaction_result, positions_nm, grid_shape, wavevectors, origin_nm, coefficients, chunk_size):
+def _apply_linear_scattering_kernel(interaction_result, spectrum, amplitudes, positions_nm, grid_shape, chunk_size):
+    """Apply K = far-field map x polarizability x inverse interaction x incident map."""
     prepared = interaction_result["prepared_interaction"]
-    incident_at_particle = _field_from_spectrum(prepared["structure"].geometry, wavevectors, origin_nm, coefficients, chunk_size)
-    weighted_interaction = evaluate_internal_field(particle=None, incident_electric_field=incident_at_particle, wavelength_nm=prepared["wavelength_nm"], environment=None, prepared_interaction=prepared)
+    incident_at_particle = _field_from_angular_spectrum(prepared["structure"].geometry, spectrum, amplitudes, chunk_size)
+    response = evaluate_internal_field(particle=None, incident_electric_field=incident_at_particle,
+                                       wavelength_nm=prepared["wavelength_nm"], environment=None,
+                                       prepared_interaction=prepared)
+    return _far_field_on_surface(response, positions_nm, grid_shape, chunk_size)
 
-    return _far_field_on_surface(weighted_interaction, positions_nm, grid_shape, chunk_size)
+def _linear_momentum_operator(field, directions, axis):
+    """p_mu / (hbar k) = n_mu."""
+    return _direction_axis_projection(directions, axis)[..., None] * field
 
-def _spectral_fields(interaction_result, field_generator, incident_parameters, axis, radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size):
-    """Sample one beam and reuse its factorized interaction for weighted fields."""
-    positions_nm, directions_sc, domega_sc, r = _angular_surface(interaction_result, axis, radius_wavelengths, n_theta, n_phi)
-    scattering_field = _far_field_on_surface(interaction_result, positions_nm, (n_theta, n_phi), chunk_size)
-    center_nm = np.mean(interaction_result["prepared_interaction"]["structure"].geometry, axis=0)
-    directions_in, domega_in, wavevectors, origin_nm, incident_coefficients, force_coefficients, spin_coefficients, orbital_coefficients = _incident_angular_spectrum(field_generator, incident_parameters, center_nm, axis, input_grid, input_span_wavelengths)
-    incident_field = incident_coefficients / domega_in[:, None]
-    I_tilde, dI_sc, dI_in = _total_differential_fields(scattering_field, incident_field, domega_sc, domega_in)
-    return positions_nm, directions_sc, domega_sc, r, scattering_field, directions_in, I_tilde, dI_sc, dI_in, wavevectors, origin_nm, force_coefficients, spin_coefficients, orbital_coefficients
+def _spin_operator(field, directions, axis):
+    """Transverse spin S_mu / hbar = i n_mu (n cross field)."""
+    return 1j * _direction_axis_projection(directions, axis)[..., None] * np.cross(directions, field)
 
-def _orbital_operator(field, directions, axis):
+def _angular_momentum_operator(field, directions, azimuthal_derivative, axis):
+    """Total J_mu / hbar in the transverse angular-spectrum subspace."""
+    result = -1j * azimuthal_derivative + 1j * np.cross(_axis_vector(axis), field)
+    return result - directions * np.sum(directions * result, axis=-1, keepdims=True)
+
+def _orbital_operator(field, directions, azimuthal_derivative, axis):
+    """Transverse orbital L'_mu = J_mu - S_mu."""
+    return _angular_momentum_operator(field, directions, azimuthal_derivative, axis) - _spin_operator(field, directions, axis)
+
+def _outgoing_azimuthal_derivative(field):
     n_phi = field.shape[1]
-    m = np.fft.fftfreq(n_phi, d=1 / n_phi)
-    derivative = np.fft.ifft(m[None, :, None] * np.fft.fft(field, axis=1), axis=1)
-    axis_vector = np.eye(3)[{"x": 0, "y": 1, "z": 2}[axis.lower()]]
-    projection = _direction_axis_projection(directions, axis)
-    spin = projection[..., None] * 1j * np.cross(directions, field)
-    return derivative + 1j * np.cross(axis_vector, field) - spin
+    modes = np.fft.fftfreq(n_phi, d=1 / n_phi)
+    return np.fft.ifft(1j * modes[None, :, None] * np.fft.fft(field, axis=1), axis=1)
+
+def _force_transfer_amplitude(spectrum, outgoing, directions_out, scatter, axis):
+    """q_F = n_out K A - K(n_in A)."""
+    incoming = _linear_momentum_operator(spectrum["amplitudes"], spectrum["directions"], axis)
+    return _linear_momentum_operator(outgoing, directions_out, axis) - scatter(incoming)
+
+def _spin_transfer_amplitude(spectrum, outgoing, directions_out, scatter, axis):
+    """q_S = S_out K A - K(S_in A)."""
+    incoming = _spin_operator(spectrum["amplitudes"], spectrum["directions"], axis)
+    return _spin_operator(outgoing, directions_out, axis) - scatter(incoming)
+
+def _orbital_transfer_amplitude(spectrum, outgoing, directions_out, scatter, axis):
+    """q_L = L'_out K A - K(L'_in A)."""
+    incoming = _orbital_operator(spectrum["amplitudes"], spectrum["directions"],
+                                 spectrum["azimuthal_derivative"], axis)
+    outgoing_derivative = _outgoing_azimuthal_derivative(outgoing)
+    return _orbital_operator(outgoing, directions_out, outgoing_derivative, axis) - scatter(incoming)
+
+def _angular_inner_product(left, right, domega):
+    return np.sum(np.sum(np.conj(left) * right, axis=-1) * domega)
+
+def _scattering_data(interaction_result, field_generator, incident_parameters, axis,
+                     radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size):
+    positions_nm, directions_out, domega_out, radius_m = _angular_surface(
+        interaction_result, axis, radius_wavelengths, n_theta, n_phi)
+    prepared = interaction_result["prepared_interaction"]
+    center_nm = np.mean(prepared["structure"].geometry, axis=0)
+    spectrum = _angular_spectrum_from_field(field_generator, incident_parameters, center_nm,
+                                            axis, input_grid, input_span_wavelengths)
+    omega = 2 * np.pi * c / (prepared["wavelength_nm"] * 1e-9)
+    amplitude_scale = np.sqrt(epsilon_0 * c * radius_m**2 / (2 * hbar * omega))
+    def scatter(amplitudes):
+        return amplitude_scale * _apply_linear_scattering_kernel(
+            interaction_result, spectrum, amplitudes, positions_nm, (n_theta, n_phi), chunk_size)
+    outgoing = scatter(spectrum["amplitudes"])
+    return spectrum, directions_out, domega_out, outgoing, scatter, omega
 
 def force_spectral_density(interaction_result, field_generator, incident_parameters, force_axis="z", radius_wavelengths=100.0, n_theta=64, n_phi=128, input_grid=48, input_span_wavelengths=8.0, chunk_size=256):
-    positions_nm, directions_sc, domega_sc, r, scattering_field, directions_in, I_tilde, dI_sc, dI_in, wavevectors, origin_nm, force_coefficients, _, _ = _spectral_fields(interaction_result, field_generator, incident_parameters, force_axis, radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size)
-    wavelength = interaction_result["prepared_interaction"]["wavelength_nm"] * 1e-9
-    omega = 2 * np.pi * c / wavelength
-    gamma_sc = _mean_scattering_rate(dI_sc, omega, r)
-
-    u_in = _direction_axis_projection(directions_in, force_axis)
-    u_sc = _direction_axis_projection(directions_sc, force_axis)
-
-    factor = (hbar * omega / c)**2 * gamma_sc / np.sum(dI_sc)
-
-    incident_term = factor * I_tilde * np.sum(u_in**2 * dI_in)
-    scattering_term = factor * np.sum(u_sc**2 * dI_sc)
-
-    B_f_in = _weighted_scattering(interaction_result, positions_nm, (n_theta, n_phi), wavevectors, origin_nm, force_coefficients, chunk_size)
-    mixed_term = -2 * factor * np.real(np.sum(np.sum(np.conj(B_f_in) * (u_sc[..., None] * scattering_field), axis=-1) * domega_sc))
-    total_spectral_density = incident_term + scattering_term + mixed_term
-
-    return total_spectral_density, incident_term, scattering_term, mixed_term
+    """Two-sided force noise from |n_out K A - K(n_in A)| squared."""
+    spectrum, directions_out, domega_out, outgoing, scatter, omega = _scattering_data(
+        interaction_result, field_generator, incident_parameters, force_axis,
+        radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size)
+    force_transfer = _force_transfer_amplitude(spectrum, outgoing, directions_out, scatter, force_axis)
+    return float((hbar * omega / c)**2 * _angular_inner_product(force_transfer, force_transfer, domega_out).real)
 
 def torque_spectral_density(interaction_result, field_generator, incident_parameters, torque_axis="z", radius_wavelengths=100.0, n_theta=64, n_phi=128, input_grid=48, input_span_wavelengths=8.0, chunk_size=256):
-    positions_nm, directions_sc, domega_sc, r, scattering_field, directions_in, I_tilde, dI_sc, dI_in, wavevectors, origin_nm,_, spin_coefficients, orbital_coefficients = _spectral_fields(interaction_result, field_generator, incident_parameters, torque_axis, radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size)
-    wavelength = interaction_result["prepared_interaction"]["wavelength_nm"] * 1e-9
-    omega = 2 * np.pi * c / wavelength
-    gamma_sc = _mean_scattering_rate(dI_sc, omega, r)
-    factor = hbar**2 * gamma_sc / np.sum(dI_sc)
+    """Return total, spin, orbital and one spin-orbital cross term, before /2pi."""
+    spectrum, directions_out, domega_out, outgoing, scatter, _ = _scattering_data(
+        interaction_result, field_generator, incident_parameters, torque_axis,
+        radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size)
+    spin_transfer = _spin_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
+    orbital_transfer = _orbital_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
 
-    u_in = _direction_axis_projection(directions_in, torque_axis)
-    u_sc = _direction_axis_projection(directions_sc, torque_axis)
-
-    B_s_in = _weighted_scattering(interaction_result, positions_nm, (n_theta, n_phi), wavevectors, origin_nm, spin_coefficients, chunk_size)
-    B_s_sc = u_sc[..., None] * 1j * np.cross(directions_sc, scattering_field)
-    spin_term = factor * (I_tilde * np.sum(u_in**2 * dI_in) + np.sum(u_sc**2 * dI_sc) - 2 * np.real(np.sum(np.sum(np.conj(B_s_in) * B_s_sc, axis=-1) * domega_sc)))
-
-    B_l_in = _weighted_scattering(interaction_result, positions_nm, (n_theta, n_phi), wavevectors, origin_nm, orbital_coefficients, chunk_size)
-    B_l_sc = _orbital_operator(scattering_field, directions_sc, torque_axis)
-    orbital_difference = B_l_in - B_l_sc
-    spin_difference = B_s_in - B_s_sc
-
-    orbital_term = factor * np.sum(np.sum(np.abs(orbital_difference)**2, axis=-1) * domega_sc)
-    mixed_term = factor * np.real(np.sum(np.sum(np.conj(orbital_difference) * spin_difference, axis=-1) * domega_sc))
-    total_spectral_density = spin_term + orbital_term + 2 * mixed_term
-
-    return total_spectral_density, spin_term, orbital_term, mixed_term
+    spin_term = hbar**2 * _angular_inner_product(spin_transfer, spin_transfer, domega_out).real
+    orbital_term = hbar**2 * _angular_inner_product(orbital_transfer, orbital_transfer, domega_out).real
+    mixed_term = hbar**2 * _angular_inner_product(orbital_transfer, spin_transfer, domega_out).real
+    total = spin_term + orbital_term + 2 * mixed_term
+    return float(total), float(spin_term), float(orbital_term), float(mixed_term)

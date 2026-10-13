@@ -296,13 +296,14 @@ def _angular_inner_product(left, right, domega):
     return np.sum(np.sum(np.conj(left) * right, axis=-1) * domega)
 
 def _scattering_data(interaction_result, field_generator, incident_parameters, axis,
-                     radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size):
+                     radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size,
+                     incident_spectrum=None):
     positions_nm, directions_out, domega_out, radius_m = _angular_surface(
         interaction_result, axis, radius_wavelengths, n_theta, n_phi)
     prepared = interaction_result["prepared_interaction"]
     center_nm = np.mean(prepared["structure"].geometry, axis=0)
-    spectrum = _angular_spectrum_from_field(field_generator, incident_parameters, center_nm,
-                                            axis, input_grid, input_span_wavelengths)
+    spectrum = incident_spectrum if incident_spectrum is not None else _angular_spectrum_from_field(
+        field_generator, incident_parameters, center_nm, axis, input_grid, input_span_wavelengths)
     omega = 2 * np.pi * c / (prepared["wavelength_nm"] * 1e-9)
     amplitude_scale = np.sqrt(epsilon_0 * c * radius_m**2 / (2 * hbar * omega))
     def scatter(amplitudes):
@@ -319,11 +320,21 @@ def force_spectral_density(interaction_result, field_generator, incident_paramet
     force_transfer = _force_transfer_amplitude(spectrum, outgoing, directions_out, scatter, force_axis)
     return float((hbar * omega / c)**2 * _angular_inner_product(force_transfer, force_transfer, domega_out).real)
 
-def torque_spectral_density(interaction_result, field_generator, incident_parameters, torque_axis="z", radius_wavelengths=100.0, n_theta=64, n_phi=128, input_grid=48, input_span_wavelengths=8.0, chunk_size=256):
-    """Return total, spin, orbital and one spin-orbital cross term, before /2pi."""
+def torque_spectral_density(interaction_result, field_generator, incident_parameters, torque_axis="z", radius_wavelengths=100.0, n_theta=64, n_phi=128, input_grid=48, input_span_wavelengths=8.0, chunk_size=256, return_angular=False, incident_spectrum=None):
+    """Return total, spin, orbital and one spin-orbital cross term, before /2pi.
+
+    If ``return_angular`` is true, also return their outgoing-direction
+    densities and integration weights. These densities already include /2pi
+    and have units of N² m² / (Hz sr), whereas the usual four totals retain
+    their original convention. Integrating a density over ``domega`` gives
+    the corresponding total divided by 2pi.
+    ``incident_spectrum`` optionally supplies a precomputed incoming angular
+    spectrum, useful when the same beam is rotated through many directions.
+    """
     spectrum, directions_out, domega_out, outgoing, scatter, _ = _scattering_data(
         interaction_result, field_generator, incident_parameters, torque_axis,
-        radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size)
+        radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size,
+        incident_spectrum=incident_spectrum)
     spin_transfer = _spin_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
     orbital_transfer = _orbital_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
 
@@ -331,4 +342,20 @@ def torque_spectral_density(interaction_result, field_generator, incident_parame
     orbital_term = hbar**2 * _angular_inner_product(orbital_transfer, orbital_transfer, domega_out).real
     mixed_term = hbar**2 * _angular_inner_product(orbital_transfer, spin_transfer, domega_out).real
     total = spin_term + orbital_term + 2 * mixed_term
-    return float(total), float(spin_term), float(orbital_term), float(mixed_term)
+    components = (float(total), float(spin_term), float(orbital_term), float(mixed_term))
+    if not return_angular:
+        return components
+
+    spin_density = hbar**2 / (2 * np.pi) * np.sum(np.abs(spin_transfer)**2, axis=-1)
+    orbital_density = hbar**2 / (2 * np.pi) * np.sum(np.abs(orbital_transfer)**2, axis=-1)
+    mixed_density = hbar**2 / (2 * np.pi) * np.sum(np.conj(orbital_transfer) * spin_transfer, axis=-1).real
+    angular = {
+        "directions": directions_out,
+        "domega": domega_out,
+        "spin": spin_density,
+        "orbital": orbital_density,
+        "mixed": mixed_density,
+        "correlation": 2 * mixed_density,
+        "total": spin_density + orbital_density + 2 * mixed_density,
+    }
+    return components, angular

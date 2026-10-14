@@ -1,281 +1,234 @@
-"""Compare three torque-noise methods and scan incident directions by particle size."""
+"""Compare recoil-heating methods and angular contribution shares across particle sizes."""
 
 import argparse
+import csv
 import os
 from pathlib import Path
 from time import perf_counter
 import numpy as np
-import pandas as pd
-from pyGDM2 import fields
-from scipy.constants import c, epsilon_0, hbar
-
-from optomechanics_levitation import particle_properties, evaluate_incident_field, evaluate_internal_field, derivative_torque_spectral_density, torque_spectral_density
+from scipy.constants import c, epsilon_0
+import optomechanics_levitation as oml
 
 ASPECT_RATIO = 2.0; MESH_DIVISIONS = 35.0
-WAVELENGTH_NM = 1550.0; NUMERICAL_APERTURE = 0.75; INTENSITY_W_PER_M2 = 1.0e9; FAR_FIELD_RADIUS_NM = 1.0e6
-N_COS_THETA = 8; N_AZIMUTH = 16; HELICITIES = (+1, -1)
-ENVIRONMENT = {"eps1": 1.0, "eps2": 1.0, "eps3": 1.0, "spacing": 0.0}
+N_COS_THETA = 12; N_AZIMUTH = 24; THEORY_LIMIT_NM = 157.0
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "outputs" / "recoil_heating_results"
-SPECTRAL_COLUMNS = ("spin_term", "orbital_term", "correlation_term", "total_torque")
+CSV_COLUMNS = ("helicity", "direction_x", "direction_y", "direction_z", "spin", "orbital", "correlation")
+RESULT_COLUMNS = ("long_axis_nm", "helicity", "D", "anisotropy_term", "theoretical_torque_total_torque", "derivative_total_torque",
+                  "spectral_total_torque", "spin_term", "orbital_term", "correlation_term", "spin_percent", "orbital_percent",
+                  "reduction_percent", "increase_percent", "spin_variance", "orbital_variance", "reduction_variance", "increase_variance")
 
-def rayleigh_limit_nm():
-    """Last long axis value is in the Rayleigh range z_R"""
-    focal_waist_nm = WAVELENGTH_NM / (np.pi * NUMERICAL_APERTURE)
-    return np.pi * focal_waist_nm**2 / WAVELENGTH_NM
+def rayleigh_limit_nm() -> float:
+    """Return the Rayleigh range of the configured optical focus in nanometres."""
+    waist_nm = oml.parameters.WAVELENGTH_NM / (np.pi * oml.parameters.NUMERICAL_APERTURE)
+    return np.pi * waist_nm**2 / oml.parameters.WAVELENGTH_NM
 
-def long_axis_values_nm():
-    """Long axis values for the theoretical comparison and long axis values for the exploratory analysis"""
-    return np.concatenate((np.linspace(25.0, 157.0, 15), np.linspace(157.0, rayleigh_limit_nm(), 30)[1:]))
+def long_axis_values_nm() -> np.ndarray:
+    """Use 15 sizes through 157 nm and 29 new sizes up to the Rayleigh range."""
+    return np.r_[np.linspace(25.0, THEORY_LIMIT_NM, 15), np.linspace(THEORY_LIMIT_NM, rayleigh_limit_nm(), 30)[1:]]
 
-def theoretical_torque_recoil_heating(long_radius_nm, short_radius_nm, epsilon_r):
-    """Theoretical torque recoil heating from the point dipole approximation"""
-    a = long_radius_nm * 1e-9; b = short_radius_nm * 1e-9; volume = 4 * np.pi * a * b**2 / 3
-    eccentricity = np.sqrt(1 - (b / a)**2)
-    L_x = ((1 - eccentricity**2) / (2 * eccentricity**3) * (np.log((1 + eccentricity) / (1 - eccentricity)) - 2 * eccentricity))
-    L_y = (1 - L_x) / 2
-    alpha_x = epsilon_0 * volume * (epsilon_r - 1) / (1 + L_x * (epsilon_r - 1))
-    alpha_y = epsilon_0 * volume * (epsilon_r - 1) / (1 + L_y * (epsilon_r - 1))
-    anisotropy_squared = ((alpha_x - alpha_y) / alpha_x)**2
-    E0 = np.sqrt(2 * INTENSITY_W_PER_M2 / (epsilon_0 * c)); omega = 2 * np.pi * c / (WAVELENGTH_NM * 1e-9)
-    power_sc = omega**4 * alpha_x**2 * E0**2 / (12 * np.pi * epsilon_0 * c**3)
-    gamma_sc = power_sc / (hbar * omega)
-    S_tau_tau = hbar**2 * gamma_sc * anisotropy_squared / (2 * np.pi)
-    return {"anisotropy_term": anisotropy_squared, "theoretical_torque_recoil_heating": S_tau_tau}
+class SizeSweep:
+    """Calculate one particle size, both fixed helicities, and their angular contributions."""
+    def __init__(self, case_id: int, long_axis_nm: float) -> None:
+        self.case_id = case_id; self.long_axis_nm = long_axis_nm
+        self.step_nm = long_axis_nm / MESH_DIVISIONS; long_radius_nm = long_axis_nm / 2
+        short_radius_nm = long_radius_nm / ASPECT_RATIO
+        self.particle = oml.particle_properties(particle_type=oml.parameters.PARTICLE_TYPE, material_name=oml.parameters.MATERIAL,
+                                               step_nm=self.step_nm, mesh=oml.parameters.MESH, center=True,
+                                               R1=long_radius_nm / self.step_nm - 0.2, R2=short_radius_nm / self.step_nm - 0.2,
+                                               R3=short_radius_nm / self.step_nm - 0.2)
+        self.center_nm = np.mean(self.particle["geometry_nm"], axis=0)
+        self.amplitude = np.sqrt(2 * oml.parameters.INTENSITY_W_PER_M2 / (epsilon_0 * c))
+        self.beams = {helicity: oml.PlaneWave((0.0, 0.0, 1.0), (1.0, 1j * helicity)).field
+                      for helicity in oml.parameters.HELICITIES}
+        self.spectra = {}
+        self.derivative = oml.DerivativeTorqueRecoilHeating(self.particle, wavelength_nm=oml.parameters.WAVELENGTH_NM,
+                                                           environment=oml.parameters.ENVIRONMENT, rotation_axes=(oml.parameters.TORQUE_AXIS,))
+        self.spectral = oml.SpectralTorqueRecoilHeating(self.particle, wavelength_nm=oml.parameters.WAVELENGTH_NM,
+                                                       environment=oml.parameters.ENVIRONMENT, torque_axis=oml.parameters.TORQUE_AXIS,
+                                                       n_theta=oml.parameters.SPECTRAL_N_THETA, n_phi=oml.parameters.SPECTRAL_N_PHI,
+                                                       radius_wavelengths=oml.parameters.FAR_FIELD_RADIUS_NM / oml.parameters.WAVELENGTH_NM)
+        self.cos_theta = -1 + (np.arange(N_COS_THETA) + 0.5) * 2 / N_COS_THETA
+        self.azimuth = (np.arange(N_AZIMUTH) + 0.5) * 2 * np.pi / N_AZIMUTH
+        self.output_path = OUTPUT_DIR / f"planewave_recoilheating_{long_axis_nm:.6f}nm.csv"
+        self.partial_path = OUTPUT_DIR / f"planewave_recoilheating_{long_axis_nm:.6f}nm.partial.csv"
 
-def directional_plane_wave(pos, env_dict, wavelength, direction, helicity, returnField="E"):
-    """Generate a plane wave with circular polarization from helicity"""
-    direction = np.asarray(direction, dtype=float)
-    direction = direction / np.linalg.norm(direction)
-    reference = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
-    e1 = reference - np.dot(reference, direction) * direction
-    e1 = e1 / np.linalg.norm(e1); e2 = np.cross(direction, e1)
-    polarization = (e1 + 1j * helicity * e2) / np.sqrt(2)
-    e_field = np.exp(2j * np.pi / wavelength * (np.asarray(pos) @ direction))[:, None] * polarization 
-    return e_field
+    ####################################
+    # INCIDENT PLANE WAVES
+    ####################################
+    @staticmethod
+    def _beam_frame(direction: np.ndarray) -> np.ndarray:
+        """Return the same local frame used by the angular-scan experiment."""
+        direction = np.array(direction, dtype=float, copy=True); direction /= np.linalg.norm(direction)
+        reference = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        x_axis = reference - np.dot(reference, direction) * direction; x_axis /= np.linalg.norm(x_axis)
+        return np.column_stack((x_axis, np.cross(direction, x_axis), direction))
 
-def make_particle(long_axis_nm):
-    step_nm = long_axis_nm / MESH_DIVISIONS; long_radius_nm = long_axis_nm / 2; short_radius_nm = long_radius_nm / ASPECT_RATIO
-    particle = particle_properties(particle_type="spheroid", material_name="sio2", step_nm=step_nm, mesh="cube", center=True, 
-                                   R1=long_radius_nm / step_nm - 0.2, R2=short_radius_nm / step_nm - 0.2, R3=short_radius_nm / step_nm - 0.2)
-    return particle, step_nm
+    def _rotated_field(self, pos: np.ndarray, env_dict: dict, wavelength: float, beam_helicity: int,
+                       beam_direction: tuple, beam_origin_nm: tuple, returnField: str = "E") -> np.ndarray:
+        """Rotate a circular plane wave from its local frame into the laboratory frame."""
+        frame = self._beam_frame(beam_direction)
+        local_positions = (np.asarray(pos) - np.asarray(beam_origin_nm)) @ frame
+        return self.beams[beam_helicity](local_positions, env_dict, wavelength, returnField=returnField) @ frame.T
 
-def solve(particle, generator, parameters, prepared_interaction=None):
-    """Calculate internal interactions"""
-    incident_field = evaluate_incident_field(field_generator=generator, positions_nm=particle["geometry_nm"], field="E", **parameters)
-    return evaluate_internal_field(
-        particle=particle if prepared_interaction is None else None,
-        incident_electric_field=incident_field,
-        wavelength_nm=WAVELENGTH_NM, environment=ENVIRONMENT,
-        prepared_interaction=prepared_interaction,
-    )
+    def _spectrum(self, helicity: int) -> dict:
+        """Sample each helicity's numerical angular spectrum once per particle size."""
+        if helicity not in self.spectra:
+            print(f"[SPECTRUM] Sampling numerical modes for σ={helicity:+d}", flush=True)
+            self.spectra[helicity] = self.spectral.incident_angular_spectrum(
+                self.beams[helicity], amplitude_v_per_m=self.amplitude, center_nm=np.zeros(3),
+                input_grid=oml.parameters.INPUT_GRID, input_span_wavelengths=oml.parameters.INPUT_SPAN_WAVELENGTHS)
+        return self.spectra[helicity]
 
+    def _spectral_result(self, helicity: int, direction: np.ndarray) -> dict:
+        """Calculate the four integrated torque channels for one incident direction."""
+        frame = self._beam_frame(direction)
+        spectrum = self.spectral.rotate_incident_spectrum(self._spectrum(helicity), frame, self.center_nm, oml.parameters.TORQUE_AXIS)
+        return self.spectral.compute(self._rotated_field, amplitude_v_per_m=self.amplitude, incident_spectrum=spectrum,
+                                     beam_helicity=helicity, beam_direction=tuple(direction),
+                                     beam_origin_nm=tuple(self.center_nm))
 
-def spectral_components(interaction, generator, parameters):
-    total, spin, orbital, mixed = torque_spectral_density(
-        interaction, generator, parameters, torque_axis="y", n_theta=64, n_phi=64)
-    scale = 1 / (2 * np.pi)
-    return dict(zip(SPECTRAL_COLUMNS, (
-        spin * scale, orbital * scale, mixed * scale,
-        2 * mixed * scale, total * scale,
-    )))
+    ####################################
+    # THREE RECOIL-HEATING METHODS
+    ####################################
+    def _theoretical_result(self) -> dict | None:
+        """Apply the point-dipole comparison only through 157 nm, inclusive."""
+        if self.long_axis_nm > THEORY_LIMIT_NM:
+            print(f"[THEORY] Skipped above {THEORY_LIMIT_NM:g} nm", flush=True)
+            return None
+        long_radius_nm = self.long_axis_nm / 2; short_radius_nm = long_radius_nm / ASPECT_RATIO
+        epsilon_r = self.particle["material"].epsilon(oml.parameters.WAVELENGTH_NM).real
+        result = oml.TheoreticalTorqueRecoilHeating(long_radius_nm, short_radius_nm, epsilon_r).compute()
+        print(f"[THEORY] anisotropy={result['anisotropy_term']:.6e}, torque={result['total_torque']:.6e}", flush=True)
+        return result
 
+    def _fixed_incidence(self, helicity: int, theory: dict | None) -> dict:
+        """Compare derivative and spectral torque for one +z incident helicity."""
+        started = perf_counter(); direction = np.array((0.0, 0.0, 1.0))
+        print(f"[FIXED σ={helicity:+d}] Derivative model, axis={oml.parameters.TORQUE_AXIS}", flush=True)
+        derivative = self.derivative.compute(self._rotated_field, amplitude_v_per_m=self.amplitude, beam_helicity=helicity,
+                                             beam_direction=tuple(direction), beam_origin_nm=tuple(self.center_nm))
+        print(f"[FIXED σ={helicity:+d}] Spectral model", flush=True)
+        spectral = self._spectral_result(helicity, direction)
+        axis = oml.parameters.TORQUE_AXIS
+        row = {"long_axis_nm": self.long_axis_nm, "helicity": helicity, "D": derivative["D"][axis],
+               "anisotropy_term": theory["anisotropy_term"] if theory is not None else None,
+               "theoretical_torque_total_torque": theory["total_torque"] if theory is not None else None,
+               "derivative_total_torque": derivative["total_torque"][axis],
+               "spectral_total_torque": spectral["total_torque"], "spin_term": spectral["spin_term"],
+               "orbital_term": spectral["orbital_term"], "correlation_term": spectral["correlation_term"]}
+        print(f"[FIXED σ={helicity:+d}] D={row['D']:.6e}, derivative={row['derivative_total_torque']:.6e}, "
+              f"spectral={row['spectral_total_torque']:.6e} ({(perf_counter() - started) / 60:.1f} min)", flush=True)
+        return row
 
-def atomic_csv(rows, path):
-    temporary = path.with_name(path.name + ".tmp")
-    pd.DataFrame(rows).to_csv(temporary, index=False, float_format="%.16e")
-    os.replace(temporary, path)
+    ####################################
+    # ANGULAR DISTRIBUTION
+    ####################################
+    @staticmethod
+    def _row(helicity: int, direction: np.ndarray, result: dict) -> dict:
+        """Keep the incident direction and the channels."""
+        return {"helicity": helicity, "direction_x": float(direction[0]), "direction_y": float(direction[1]),
+                "direction_z": float(direction[2]), "spin": result["spin_term"], "orbital": result["orbital_term"],
+                "correlation": result["correlation_term"]}
 
+    @staticmethod
+    def _row_key(row: dict) -> tuple:
+        """Identify one direction when resuming an interrupted size calculation."""
+        return (int(row["helicity"]), *(round(float(row[key]), 12) for key in ("direction_x", "direction_y", "direction_z")))
 
-def summary_row(case_id, long_axis_nm, step_nm, particle):
-    stage_start = perf_counter()
-    amplitude = np.sqrt(2 * INTENSITY_W_PER_M2 / (epsilon_0 * c))
-    parameters = dict(
-        wavelength_nm=WAVELENGTH_NM, environment=ENVIRONMENT,
-        amplitude_v_per_m=amplitude, inc_angle=0.0, inc_plane="xz",
-        E_p=1.0, E_s=0.0,
-    )
-    row = {
-        "case_id": case_id,
-        "long_axis_nm": long_axis_nm,
-        "aspect_ratio": ASPECT_RATIO,
-        "mesh_divisions": MESH_DIVISIONS,
-        "step_nm": step_nm,
-        "n_dipoles": len(particle["geometry_nm"]),
-        "wavelength_nm": WAVELENGTH_NM,
-        "intensity_W_per_m2": INTENSITY_W_PER_M2,
-        "rayleigh_limit_nm": rayleigh_limit_nm(),
-        "inc_angle_deg": 0.0,
-        "torque_axis": "y",
-        "militaru_applicable": long_axis_nm <= 100.0,
-    }
-    if long_axis_nm <= 100.0:
-        print("[SUMMARY 1/3] Calculating Militaru polarizabilities, scattering rate and torque noise...", flush=True)
-        row.update(militaru_torque_recoil_heating(
-            long_axis_nm / 2, long_axis_nm / (2 * ASPECT_RATIO),
-            particle["material"].epsilon(WAVELENGTH_NM).real))
-        print(f"[SUMMARY 1/3] Done: S_tau_tau={row['militaru_S_tau_tau_N2_m2_per_Hz']:.6e} "
-              f"N^2 m^2/Hz ({perf_counter() - stage_start:.1f} s)", flush=True)
-    else:
-        print("[SUMMARY 1/3] Militaru skipped: long axis exceeds 100 nm.", flush=True)
-        row.update({key: np.nan for key in (
-            "militaru_alpha_x_SI", "militaru_alpha_y_SI",
-            "militaru_delta_alpha_over_alpha_x_squared",
-            "militaru_gamma_sc_per_s", "militaru_S_tau_tau_N2_m2_per_Hz",
-        )})
+    def _partial_rows(self) -> list[dict]:
+        """Read any completed angular samples from this size's temporary CSV."""
+        if not self.partial_path.exists():
+            return []
+        with self.partial_path.open(newline="") as file:
+            return [{key: int(row[key]) if key == "helicity" else float(row[key]) for key in CSV_COLUMNS}
+                    for row in csv.DictReader(file)]
 
-    stage_start = perf_counter()
-    print("[SUMMARY 2/3] Calculating orientation derivatives about y and z...", flush=True)
-    gamma_sc, D, S_tau_tau = derivative_torque_spectral_density(
-        particle, fields.plane_wave, parameters,
-        far_field_distance=FAR_FIELD_RADIUS_NM, rotation_axes=("y", "z"), angle_rad=0.005)
-    row["derivative_gamma_sc_per_s"] = gamma_sc
-    for axis in ("y", "z"):
-        row[f"derivative_D_{axis}"] = D[axis]
-        row[f"derivative_S_tau_tau_{axis}_N2_m2_per_Hz"] = S_tau_tau[axis]
-    print(f"[SUMMARY 2/3] Done: Gamma_sc={gamma_sc:.6e} s^-1, "
-          f"D_y={D['y']:.6e}, D_z={D['z']:.6e}, "
-          f"S_y={S_tau_tau['y']:.6e}, S_z={S_tau_tau['z']:.6e} "
-          f"({perf_counter() - stage_start:.1f} s)", flush=True)
+    @staticmethod
+    def _contribution_statistics(rows: list[dict]) -> dict[str, float]:
+        """Return ratios of means and sample variances of per-direction percentages."""
+        spin = np.array([row["spin"] for row in rows]); orbital = np.array([row["orbital"] for row in rows])
+        correlation = np.array([row["correlation"] for row in rows]); q0 = spin + orbital
+        terms = {"spin": spin, "orbital": orbital, "reduction": np.maximum(-correlation, 0),
+                 "increase": np.maximum(correlation, 0)}
+        statistics = {}
+        for name, values in terms.items():
+            statistics[f"{name}_percent"] = 100 * np.mean(values) / np.mean(q0)
+            statistics[f"{name}_variance"] = np.var(100 * values[q0 > 0] / q0[q0 > 0], ddof=1)
+        return statistics
 
-    stage_start = perf_counter()
-    print("[SUMMARY 3/3] Solving the same +z, x-polarized beam for spectral torque components...", flush=True)
-    interaction = solve(particle, fields.plane_wave, parameters)
-    row.update({f"spectral_{key}": value for key, value in
-                spectral_components(interaction, fields.plane_wave, parameters).items()})
-    row["spectral_S_tau_tau_y_N2_m2_per_Hz"] = row["spectral_total_N2_m2_per_Hz"]
-    # The spectral function returns noise, not D; normalize it with the
-    # scattering rate of the identical beam from the derivative method.
-    row["spectral_D_y_from_derivative_gamma"] = (
-        2 * np.pi * row["spectral_total_N2_m2_per_Hz"] / (hbar**2 * gamma_sc))
-    print(f"[SUMMARY 3/3] Done: total={row['spectral_total_N2_m2_per_Hz']:.6e}, "
-          f"spin={row['spectral_spin_N2_m2_per_Hz']:.6e}, "
-          f"orbital={row['spectral_orbital_N2_m2_per_Hz']:.6e}, "
-          f"correlation={row['spectral_correlation_2mixed_N2_m2_per_Hz']:.6e} "
-          f"({perf_counter() - stage_start:.1f} s)", flush=True)
-    return row
+    def _contribution_scan(self, existing: list[dict]) -> dict[int, dict[str, float]]:
+        """Scan both helicities and summarize their spin, orbital, and correlation shares."""
+        completed = {self._row_key(row) for row in existing}
+        total = len(oml.parameters.HELICITIES) * N_COS_THETA * N_AZIMUTH; done = len(completed)
+        started = perf_counter()
+        print(f"[CONTRIBUTIONS] incident grid={N_COS_THETA} x {N_AZIMUTH} x {len(oml.parameters.HELICITIES)} helicities; "
+              f"{done}/{total} complete", flush=True)
 
+        with self.partial_path.open("a", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
+            if file.tell() == 0:
+                writer.writeheader(); file.flush()
+            for helicity in oml.parameters.HELICITIES:
+                for i in range(N_COS_THETA):
+                    for j in range(N_AZIMUTH):
+                        u = self.cos_theta[i]; phi = self.azimuth[j]
+                        direction = np.array((np.sqrt(1 - u**2) * np.cos(phi), np.sqrt(1 - u**2) * np.sin(phi), u))
+                        key = (helicity, *(round(float(value), 12) for value in direction))
+                        if key in completed:
+                            continue
+                        row = self._row(helicity, direction, self._spectral_result(helicity, direction))
+                        writer.writerow(row); file.flush(); completed.add(key); done += 1
+                        print(f"[CONTRIBUTIONS {done}/{total}] remaining={total - done}, σ={helicity:+d}, "
+                              f"i={i + 1}/{N_COS_THETA}, j={j + 1}/{N_AZIMUTH}, "
+                              f"elapsed={(perf_counter() - started) / 60:.1f} min", flush=True)
 
-def angular_cases():
-    cos_theta = -1 + (np.arange(N_COS_THETA) + 0.5) * 2 / N_COS_THETA
-    azimuth = (np.arange(N_AZIMUTH) + 0.5) * 2 * np.pi / N_AZIMUTH
-    for helicity in HELICITIES:
-        for u in cos_theta:
-            for phi in azimuth:
-                direction = (np.sqrt(1 - u**2) * np.cos(phi),
-                             np.sqrt(1 - u**2) * np.sin(phi), u)
-                yield helicity, float(u), float(phi), direction
+        rows = self._partial_rows()
+        if len(rows) != total:
+            raise RuntimeError("Incomplete contribution scan; the partial CSV was retained for resumption")
+        return {helicity: self._contribution_statistics([row for row in rows if row["helicity"] == helicity])
+                for helicity in oml.parameters.HELICITIES}
 
+    ####################################
+    # SIZE-SWEEP OUTPUT
+    ####################################
+    def run(self) -> Path:
+        """Write one CSV for this size with two helicity rows and their shares."""
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        if self.output_path.exists():
+            with self.output_path.open(newline="") as file:
+                if tuple(csv.DictReader(file).fieldnames) == RESULT_COLUMNS:
+                    print(f"[COMPLETE] Already saved: {self.output_path}", flush=True)
+                    return self.output_path
+        started = perf_counter(); existing = self._partial_rows()
+        print(f"[CASE {self.case_id + 1}/{len(long_axis_values_nm())}] long axis={self.long_axis_nm:.6f} nm, "
+              f"dipoles={len(self.particle['geometry_nm'])}, existing angular samples={len(existing)}", flush=True)
+        theory = self._theoretical_result()
+        positive = self._fixed_incidence(+1, theory); negative = self._fixed_incidence(-1, theory)
+        statistics = self._contribution_scan(existing)
+        positive.update(statistics[+1]); negative.update(statistics[-1])
 
-def distribution_rows(case_id, long_axis_nm, particle, checkpoint_path):
-    cases = list(angular_cases())
-    existing = pd.read_csv(checkpoint_path).to_dict("records") if checkpoint_path.exists() else []
-    rows = {int(row["direction_index"]): row for row in existing}
-    if any(
-        row["case_id"] != case_id
-        or not np.isclose(row["long_axis_nm"], long_axis_nm)
-        or not np.isclose(row["aspect_ratio"], ASPECT_RATIO)
-        or not np.isclose(row["mesh_divisions"], MESH_DIVISIONS)
-        or not np.isclose(row["wavelength_nm"], WAVELENGTH_NM)
-        or not np.isclose(row["intensity_W_per_m2"], INTENSITY_W_PER_M2)
-        or not 0 <= int(row["direction_index"]) < len(cases)
-        for row in existing
-    ):
-        raise ValueError(f"Checkpoint belongs to a different case: {checkpoint_path}")
-    print(f"[DISTRIBUTION] Starting angular scan: {len(cases)} beams "
-          f"({N_COS_THETA} cos(theta) x {N_AZIMUTH} azimuths x {len(HELICITIES)} helicities); "
-          f"{len(rows)} already saved", flush=True)
-
-    amplitude = np.sqrt(2 * INTENSITY_W_PER_M2 / (epsilon_0 * c))
-    prepared_interaction = None
-    for index, (helicity, cos_theta, phi, direction) in enumerate(cases):
-        if index in rows:
-            continue
-        beam_start = perf_counter()
-        print(f"[DISTRIBUTION {index + 1}/{len(cases)}] Calculating "
-              f"helicity={helicity:+d}, cos(theta)={cos_theta:+.4f}, "
-              f"phi={np.degrees(phi):.3f} deg...", flush=True)
-        parameters = dict(
-            wavelength_nm=WAVELENGTH_NM, environment=ENVIRONMENT,
-            amplitude_v_per_m=amplitude, direction=direction, helicity=helicity,
-        )
-        interaction = solve(particle, directional_plane_wave, parameters, prepared_interaction)
-        prepared_interaction = interaction["prepared_interaction"]
-        rows[index] = {
-            "case_id": case_id,
-            "long_axis_nm": long_axis_nm,
-            "aspect_ratio": ASPECT_RATIO,
-            "mesh_divisions": MESH_DIVISIONS,
-            "wavelength_nm": WAVELENGTH_NM,
-            "intensity_W_per_m2": INTENSITY_W_PER_M2,
-            "direction_index": index,
-            "helicity": helicity,
-            "polarization": "RCP" if helicity == 1 else "LCP",
-            "cos_theta": cos_theta,
-            "theta_deg": np.degrees(np.arccos(cos_theta)),
-            "phi_deg": np.degrees(phi),
-            "direction_x": direction[0],
-            "direction_y": direction[1],
-            "direction_z": direction[2],
-            **spectral_components(interaction, directional_plane_wave, parameters),
-        }
-        atomic_csv([rows[i] for i in sorted(rows)], checkpoint_path)
-        print(f"[DISTRIBUTION {index + 1}/{len(cases)}] Saved: "
-              f"total={rows[index]['total_N2_m2_per_Hz']:.6e} N^2 m^2/Hz "
-              f"({perf_counter() - beam_start:.1f} s)", flush=True)
-
-    if len(rows) != len(cases):
-        raise RuntimeError(f"Expected {len(cases)} directions, found {len(rows)}")
-    return [rows[i] for i in range(len(cases))]
+        temporary = self.output_path.with_suffix(".tmp")
+        with temporary.open("w", newline="") as file:
+            writer = csv.DictWriter(file, fieldnames=RESULT_COLUMNS); writer.writeheader(); writer.writerows((positive, negative))
+        os.replace(temporary, self.output_path); self.partial_path.unlink()
+        print(f"[COMPLETE] {self.output_path} ({(perf_counter() - started) / 60:.1f} min)", flush=True)
+        return self.output_path
 
 
-def main():
+def main() -> None:
+    """Run one independent particle size from a Slurm array or a direct call."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--case-id", type=int, default=None,
-                        help="Override SLURM_ARRAY_TASK_ID for a direct run")
-    parser.add_argument("--list-cases", action="store_true",
-                        help="Print the 80 long-axis lengths without running simulations")
-    args = parser.parse_args()
-    sizes = long_axis_values_nm()
+    parser.add_argument("--case-id", type=int, default=None, help="Override SLURM_ARRAY_TASK_ID")
+    parser.add_argument("--list-cases", action="store_true", help="List all particle lengths without running simulations")
+    args = parser.parse_args(); sizes = long_axis_values_nm()
     if args.list_cases:
         for case_id, size in enumerate(sizes):
             print(f"{case_id:02d}, {size:.12f} nm")
         return
-
     case_id = args.case_id if args.case_id is not None else int(os.environ.get("SLURM_ARRAY_TASK_ID", "0"))
     if not 0 <= case_id < len(sizes):
         parser.error(f"case ID must be between 0 and {len(sizes) - 1}")
-    start = perf_counter()
-    long_axis_nm = float(sizes[case_id])
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    case_stem = f"case_{case_id:02d}_L_{long_axis_nm:.6f}nm".replace(".", "p")
-    summary_path = OUTPUT_DIR / f"recoil_heating_summary_{case_stem}.csv"
-    distribution_path = OUTPUT_DIR / f"torque_component_distribution_{case_stem}.csv"
-    checkpoint_path = distribution_path.with_name(distribution_path.stem + ".partial.csv")
-    if summary_path.exists() and distribution_path.exists():
-        print(f"[COMPLETE] Case {case_id:02d} already has both CSV files", flush=True)
-        return
-
-    particle, step_nm = make_particle(long_axis_nm)
-    print(f"[CASE {case_id:02d}/79] long axis={long_axis_nm:.9f} nm, "
-          f"mesh divisions={MESH_DIVISIONS:g}, dipoles={len(particle['geometry_nm'])}", flush=True)
-    print(f"[CASE] Slurm job={os.environ.get('SLURM_JOB_ID', 'direct run')}; "
-          f"step={step_nm:.6f} nm; output={OUTPUT_DIR}", flush=True)
-    if not summary_path.exists():
-        print("[SUMMARY] Starting three-method comparison...", flush=True)
-        row = summary_row(case_id, long_axis_nm, step_nm, particle)
-        atomic_csv([row], summary_path)
-        print(f"[OUTPUT] {summary_path}", flush=True)
-    else:
-        print(f"[SUMMARY] Already saved: {summary_path}", flush=True)
-
-    if not distribution_path.exists():
-        distribution_rows(case_id, long_axis_nm, particle, checkpoint_path)
-        os.replace(checkpoint_path, distribution_path)
-        print(f"[OUTPUT] {distribution_path}", flush=True)
-    else:
-        print(f"[DISTRIBUTION] Already saved: {distribution_path}", flush=True)
-    print(f"[COMPLETE] elapsed={(perf_counter() - start) / 60:.2f} min", flush=True)
-
+    SizeSweep(case_id, float(sizes[case_id])).run()
 
 if __name__ == "__main__":
     main()

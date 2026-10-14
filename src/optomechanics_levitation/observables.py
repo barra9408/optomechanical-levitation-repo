@@ -1,7 +1,6 @@
 import numpy as np
 from scipy.constants import epsilon_0, mu_0, c, hbar
 from pyGDM2 import fields
-from .particle import rotate_particle
 from .incident_field import evaluate_incident_field
 from .light_matter_interaction import evaluate_internal_field, evaluate_far_field
 
@@ -36,67 +35,16 @@ def evaluate_torque(stress_interaction, positions_nm, normals, area_m2, center_n
 
 ############################## RECOIL HEATING FROM ORIENTATION DERIVATIVE ########################################
 def derivative_torque_spectral_density(particle, field_generator, incident_parameters, far_field_distance=1e6, rotation_axes=("y", "z"), angle_rad=0.005):
-    """Return Gamma_sc, D and S_tau_tau from finite orientation derivatives.
+    """Compatibility wrapper returning Γ_sc, D and S_ττ from the derivative class."""
+    from .recoil_heating import DerivativeTorqueRecoilHeating
 
-    Distances and wavelength are in nm; angle_rad is in radians. The returned
-    D and S_tau_tau are dictionaries indexed by the requested rotation axes.
-    """
-    wavelength = incident_parameters["wavelength_nm"]
-    environment = incident_parameters["environment"]
-
-    theta = (np.arange(64) + 0.5) * np.pi / 64
-    phi = np.linspace(0, 2 * np.pi, 64, endpoint=False)
-    theta_grid, phi_grid = np.meshgrid(theta, phi, indexing="ij")
-    directions = np.column_stack(((np.sin(theta_grid) * np.cos(phi_grid)).ravel(), (np.sin(theta_grid) * np.sin(phi_grid)).ravel(), np.cos(theta_grid).ravel()))
-    observation_points = far_field_distance * directions
-
-    geometry = particle["geometry_nm"]
-    rotation_origin = geometry.mean(axis=0)
-
-    def scattering_rate(scattered_field):
-        field_squared = np.sum(np.abs(scattered_field)**2, axis=1)
-        field_squared = field_squared.reshape(len(theta), len(phi))
-
-        dtheta = theta[1] - theta[0]
-        dphi = phi[1] - phi[0]
-        integral = np.sum(field_squared * np.sin(theta)[:, None]) * dtheta * dphi
-
-        radius_m = far_field_distance * 1e-9
-        omega = 2 * np.pi * c / (wavelength * 1e-9)
-        P_sc = epsilon_0 * c * radius_m**2 * integral / 2
-
-        return P_sc / (hbar * omega)
-
-    def scattered_field_at(axis=None, rotation_rad=0.0):
-        oriented_particle = particle.copy()
-
-        if axis is not None:
-            angles_deg = np.zeros(3)
-            angles_deg["xyz".index(axis)] = np.degrees(rotation_rad)
-            oriented_particle["geometry_nm"] = rotate_particle(geometry, angles_deg, origin_nm=rotation_origin)
-
-        incident_field = evaluate_incident_field(field_generator=field_generator, positions_nm=oriented_particle["geometry_nm"],
-                                                 field="E", **incident_parameters)
-        interaction = evaluate_internal_field(particle=oriented_particle, incident_electric_field=incident_field,
-                                              wavelength_nm=wavelength, environment=environment)
-
-        return evaluate_far_field(interaction_result=interaction, positions_nm=observation_points, field="E")
-
-    scattered_field = scattered_field_at()
-    Gamma_sc = scattering_rate(scattered_field)
-
-    D = {}
-    S_tau_tau = {}
-    for axis in rotation_axes:
-        field_plus = scattered_field_at(axis, +angle_rad)
-        field_minus = scattered_field_at(axis, -angle_rad)
-        field_derivative = (field_plus - field_minus) / (2 * angle_rad)
-
-        gamma_derivative = scattering_rate(field_derivative)
-        D[axis] = gamma_derivative / Gamma_sc
-        S_tau_tau[axis] = hbar**2 * gamma_derivative / (2 * np.pi)
-
-    return Gamma_sc, D, S_tau_tau
+    beam_parameters = dict(incident_parameters)
+    wavelength_nm = beam_parameters.pop("wavelength_nm"); environment = beam_parameters.pop("environment")
+    amplitude_v_per_m = beam_parameters.pop("amplitude_v_per_m")
+    calculator = DerivativeTorqueRecoilHeating(particle, wavelength_nm, environment, far_field_distance_nm=far_field_distance,
+                                               rotation_axes=rotation_axes, angle_rad=angle_rad)
+    result = calculator.compute(field_generator, amplitude_v_per_m=amplitude_v_per_m, **beam_parameters)
+    return result["Gamma_sc"], result["D"], result["total_torque"]
 
 
 
@@ -257,40 +205,10 @@ def _linear_momentum_operator(field, directions, axis):
     """p_mu / (hbar k) = n_mu."""
     return _direction_axis_projection(directions, axis)[..., None] * field
 
-def _spin_operator(field, directions, axis):
-    """Transverse spin S_mu / hbar = i n_mu (n cross field)."""
-    return 1j * _direction_axis_projection(directions, axis)[..., None] * np.cross(directions, field)
-
-def _angular_momentum_operator(field, directions, azimuthal_derivative, axis):
-    """Total J_mu / hbar in the transverse angular-spectrum subspace."""
-    result = -1j * azimuthal_derivative + 1j * np.cross(_axis_vector(axis), field)
-    return result - directions * np.sum(directions * result, axis=-1, keepdims=True)
-
-def _orbital_operator(field, directions, azimuthal_derivative, axis):
-    """Transverse orbital L'_mu = J_mu - S_mu."""
-    return _angular_momentum_operator(field, directions, azimuthal_derivative, axis) - _spin_operator(field, directions, axis)
-
-def _outgoing_azimuthal_derivative(field):
-    n_phi = field.shape[1]
-    modes = np.fft.fftfreq(n_phi, d=1 / n_phi)
-    return np.fft.ifft(1j * modes[None, :, None] * np.fft.fft(field, axis=1), axis=1)
-
 def _force_transfer_amplitude(spectrum, outgoing, directions_out, scatter, axis):
     """q_F = n_out K A - K(n_in A)."""
     incoming = _linear_momentum_operator(spectrum["amplitudes"], spectrum["directions"], axis)
     return _linear_momentum_operator(outgoing, directions_out, axis) - scatter(incoming)
-
-def _spin_transfer_amplitude(spectrum, outgoing, directions_out, scatter, axis):
-    """q_S = S_out K A - K(S_in A)."""
-    incoming = _spin_operator(spectrum["amplitudes"], spectrum["directions"], axis)
-    return _spin_operator(outgoing, directions_out, axis) - scatter(incoming)
-
-def _orbital_transfer_amplitude(spectrum, outgoing, directions_out, scatter, axis):
-    """q_L = L'_out K A - K(L'_in A)."""
-    incoming = _orbital_operator(spectrum["amplitudes"], spectrum["directions"],
-                                 spectrum["azimuthal_derivative"], axis)
-    outgoing_derivative = _outgoing_azimuthal_derivative(outgoing)
-    return _orbital_operator(outgoing, directions_out, outgoing_derivative, axis) - scatter(incoming)
 
 def _angular_inner_product(left, right, domega):
     return np.sum(np.sum(np.conj(left) * right, axis=-1) * domega)
@@ -331,31 +249,17 @@ def torque_spectral_density(interaction_result, field_generator, incident_parame
     ``incident_spectrum`` optionally supplies a precomputed incoming angular
     spectrum, useful when the same beam is rotated through many directions.
     """
-    spectrum, directions_out, domega_out, outgoing, scatter, _ = _scattering_data(
-        interaction_result, field_generator, incident_parameters, torque_axis,
-        radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size,
-        incident_spectrum=incident_spectrum)
-    spin_transfer = _spin_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
-    orbital_transfer = _orbital_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
+    from .recoil_heating import SpectralTorqueRecoilHeating
 
-    spin_term = hbar**2 * _angular_inner_product(spin_transfer, spin_transfer, domega_out).real
-    orbital_term = hbar**2 * _angular_inner_product(orbital_transfer, orbital_transfer, domega_out).real
-    mixed_term = hbar**2 * _angular_inner_product(orbital_transfer, spin_transfer, domega_out).real
-    total = spin_term + orbital_term + 2 * mixed_term
-    components = (float(total), float(spin_term), float(orbital_term), float(mixed_term))
-    if not return_angular:
-        return components
-
-    spin_density = hbar**2 / (2 * np.pi) * np.sum(np.abs(spin_transfer)**2, axis=-1)
-    orbital_density = hbar**2 / (2 * np.pi) * np.sum(np.abs(orbital_transfer)**2, axis=-1)
-    mixed_density = hbar**2 / (2 * np.pi) * np.sum(np.conj(orbital_transfer) * spin_transfer, axis=-1).real
-    angular = {
-        "directions": directions_out,
-        "domega": domega_out,
-        "spin": spin_density,
-        "orbital": orbital_density,
-        "mixed": mixed_density,
-        "correlation": 2 * mixed_density,
-        "total": spin_density + orbital_density + 2 * mixed_density,
-    }
-    return components, angular
+    result = SpectralTorqueRecoilHeating._torque_recoil_heating_terms(
+        interaction_result, field_generator, incident_parameters,
+        torque_axis=torque_axis, radius_wavelengths=radius_wavelengths,
+        n_theta=n_theta, n_phi=n_phi, input_grid=input_grid,
+        input_span_wavelengths=input_span_wavelengths, chunk_size=chunk_size,
+        return_angular=return_angular, incident_spectrum=incident_spectrum,
+    )
+    if return_angular:
+        components, angular = result
+        angular["mixed"] = angular["correlation"] / 2
+        return components, angular
+    return result

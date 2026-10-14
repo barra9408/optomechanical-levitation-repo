@@ -9,7 +9,7 @@ def electric_field_amplitude_from_power(power_w, profile_power_integral_m2, impe
 
 def _create_incident_field(field_generator, wavelengths_nm, **beam_parameters):
     wavelengths_nm = np.atleast_1d(np.asarray(wavelengths_nm, dtype=float))
-    return fields.efield(field_generator, wavelengths=wavelengths_nm, kwargs=beam_parameters)
+    return fields.efield(getattr(field_generator, "field", field_generator), wavelengths=wavelengths_nm, kwargs=beam_parameters)
 
 def evaluate_incident_field(field_generator, positions_nm, wavelength_nm, environment, amplitude_v_per_m, field="E", **beam_parameters):
     incident_field = _create_incident_field(field_generator, wavelength_nm, **beam_parameters)
@@ -18,4 +18,3 @@ def evaluate_incident_field(field_generator, positions_nm, wavelength_nm, enviro
         values = incident_field.field_generator(pos=positions_nm, env_dict=environment, wavelength=incident_field.wavelengths[0], returnField="E" if component == "E" else "B", **incident_field.kwargs_permutations[0])
         result.append(amplitude_v_per_m * np.asarray(values, dtype=complex))
     return tuple(result) if field == "both" else result[0]
-

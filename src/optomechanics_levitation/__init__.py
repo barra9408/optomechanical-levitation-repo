@@ -1,8 +1,11 @@
 from .particle import particle_properties, translate_particle, rotate_particle
 from .incident_field import input_beam_waist_from_filling_factor, electric_field_amplitude_from_power, evaluate_incident_field
-from .light_matter_interaction import evaluate_internal_field, evaluate_near_field, evaluate_far_field, total_fields
+from .light_matter_interaction import LightMatterInteraction, evaluate_internal_field, evaluate_near_field, evaluate_far_field, total_fields
 from .observables import maxwell_stress_tensor, spherical_integration_surface, evaluate_force, evaluate_torque, derivative_torque_spectral_density, force_spectral_density, torque_spectral_density
-from .optical_fields import hermite_gauss_00
+from .recoil_heating import TheoreticalTorqueRecoilHeating, DerivativeTorqueRecoilHeating, SpectralTorqueRecoilHeating
+from .optical_fields.hermitegauss00 import HermiteGauss00
+from .optical_fields.planewave import PlaneWave
+from . import parameters
 
 __all__ = [
     "particle_properties",
@@ -11,10 +14,11 @@ __all__ = [
     "input_beam_waist_from_filling_factor",
     "electric_field_amplitude_from_power",
     "evaluate_incident_field",
+    "LightMatterInteraction",
     "evaluate_internal_field",
     "evaluate_near_field",
     "evaluate_far_field",
-    "total_fields"
+    "total_fields",
     "maxwell_stress_tensor",
     "spherical_integration_surface",
     "evaluate_force",
@@ -22,5 +26,10 @@ __all__ = [
     "derivative_torque_spectral_density",
     "force_spectral_density",
     "torque_spectral_density",
-    "hermite_gauss_00",
+    "TheoreticalTorqueRecoilHeating",
+    "DerivativeTorqueRecoilHeating",
+    "SpectralTorqueRecoilHeating",
+    "HermiteGauss00",
+    "PlaneWave",
+    "parameters",
 ]

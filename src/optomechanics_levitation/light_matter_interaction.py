@@ -1,90 +1,166 @@
+from collections.abc import Mapping
+from typing import Any, Literal
 import numpy as np
 import scipy.linalg as la
-from scipy.spatial import cKDTree
+from numpy.typing import NDArray
 from pyGDM2 import propagators, structures
+from scipy.spatial import cKDTree
 
-_Z0 = np.sqrt(4.0e-7 * np.pi / 8.85418782e-12)
+FloatArray = NDArray[np.float64]; ComplexArray = NDArray[np.complex128]
+ScatteredField = ComplexArray | tuple[ComplexArray, ComplexArray]
 
-def _create_dyads(environment):
-    env = {} if environment is None else environment
-    default_eps = env.get("eps_env", 1.0)
-    indices = [complex(env.get(key, default_eps))**0.5 for key in ("eps1", "eps2", "eps3")]
-    return propagators.DyadsQuasistatic123(n1=indices[0], n2=indices[1], n3=indices[2], spacing=env.get("spacing_nm", env.get("spacing", 0.0)), radiative_correction=True)
+class LightMatterInteraction:
+    """Particle response with one reusable interaction-matrix factorization."""
+    _Z0 = np.sqrt(4.0e-7 * np.pi / 8.85418782e-12)
 
-def _interaction_matrix(particle, wavelength_nm, dyads):
-    geometry = np.asarray(particle["geometry_nm"], dtype=np.float64)
-    structure = structures.struct(particle["step_nm"], geometry, particle["material"], normalization=particle["mesh"], auto_shift_structure=False, check_geometry_consistency=False, warn=False, verbose=False)
-    self_terms = dyads.getSelfTermEE(wavelength_nm, structure)
-    
-    polarizability = dyads.getPolarizabilityTensor(wavelength_nm, structure)
-    green_config = dyads.getConfigDictG(wavelength_nm, structure, None)
-    matrix = np.zeros((3 * len(geometry), 3 * len(geometry)), dtype=np.complex64, order="F")
-    dyads.tsbs_EE(geometry, wavelength_nm, self_terms, polarizability, green_config, matrix)
-    
-    prepared = {
-        "structure": structure,
-        "dyads": dyads,
-        "wavelength_nm": wavelength_nm,
-        "polarizability": polarizability,
-        "green_config": green_config,
-    }
+    def __init__(self, particle: dict[str, Any], wavelength_nm: float, environment: Mapping[str, float | complex]) -> None:
+        self.particle = particle; self.wavelength_nm = wavelength_nm; self.environment = environment
+        self.prepared_interaction = None; self.interaction_result = None
 
-    return matrix, prepared
+    ####################################
+    # INTERACTION MATRIX
+    ####################################
+    @staticmethod
+    def _create_dyads(environment: Mapping[str, float | complex] | None):
+        """Create the Green dyads for the surrounding media."""
+        env = {} if environment is None else environment
+        default_eps = env.get("eps_env", 1.0)
+        indices = [complex(env.get(key, default_eps))**0.5 for key in ("eps1", "eps2", "eps3")]
+        return propagators.DyadsQuasistatic123(n1=indices[0], n2=indices[1], n3=indices[2], spacing=env.get("spacing_nm", env.get("spacing", 0.0)), radiative_correction=True)
 
-def _factorize_interaction_matrix(matrix):
-    return la.lu_factor(matrix, overwrite_a=True)
+    @staticmethod
+    def _interaction_matrix(particle: dict[str, Any], wavelength_nm: float, dyads) -> tuple[ComplexArray, dict[str, Any]]:
+        """Build the coupled-dipole interaction matrix and its scattering data."""
+        geometry = np.asarray(particle["geometry_nm"], dtype=np.float64)
+        structure = structures.struct(particle["step_nm"], geometry, particle["material"], normalization=particle["mesh"], auto_shift_structure=False, check_geometry_consistency=False, warn=False, verbose=False)
+        self_terms = dyads.getSelfTermEE(wavelength_nm, structure)
 
-def evaluate_internal_field(particle, incident_electric_field, wavelength_nm, environment, prepared_interaction=None):
-    if prepared_interaction is None:
-        dyads = _create_dyads(environment)
-        matrix, prepared_interaction = _interaction_matrix(particle, wavelength_nm, dyads)
-        prepared_interaction["lu"], prepared_interaction["pivots"] = _factorize_interaction_matrix(matrix)
+        polarizability = dyads.getPolarizabilityTensor(wavelength_nm, structure)
+        green_config = dyads.getConfigDictG(wavelength_nm, structure, None)
+        matrix = np.zeros((3 * len(geometry), 3 * len(geometry)), dtype=np.complex64, order="F")
+        dyads.tsbs_EE(geometry, wavelength_nm, self_terms, polarizability, green_config, matrix)
 
-    incident = np.asarray(incident_electric_field, dtype=np.complex64)
-    internal = la.lu_solve((prepared_interaction["lu"], prepared_interaction["pivots"]), incident.reshape(-1)).reshape(-1, 3)
-    return {"E_internal": internal, "prepared_interaction": prepared_interaction}
+        prepared = {"structure": structure, "dyads": dyads, "wavelength_nm": wavelength_nm,
+                    "polarizability": polarizability, "green_config": green_config}
+        return matrix, prepared
 
-def evaluate_near_field(interaction_result, positions_nm, field="E"):        
-    prepared = interaction_result["prepared_interaction"]
-    structure = prepared["structure"]
-    dyads = prepared["dyads"]
-    positions = np.asarray(positions_nm, dtype=np.float64)
-    polarization = np.einsum("nij,nj->ni", prepared["polarizability"], interaction_result["E_internal"])
-    distances = cKDTree(structure.geometry).query(positions, k=1)[0]
-    outside = distances > 1.005 * structure.step
-    probe_positions = positions[outside]
+    @staticmethod
+    def _factorize_interaction_matrix(matrix: ComplexArray):
+        """Factorize the matrix once for all incident fields of this particle."""
+        return la.lu_factor(matrix, overwrite_a=True)
 
-    result = []
-    for component in (("E", "H") if field == "both" else (field,)):
-        scattered = np.full((len(positions), 3), np.nan, dtype=np.complex64)
-        green = np.zeros((len(structure.geometry), len(probe_positions), 3, 3), dtype=np.complex64)
-        dyads.eval_G(structure.geometry, probe_positions, dyads.G_EE if component == "E" else dyads.G_HE, prepared["wavelength_nm"], prepared["green_config"], green)
-        scattered[outside] = np.einsum("nmij,nj->mi", green, polarization)
-        if component == "H":
-            # PyGDM's raw magnetic (B/H) response needs the SI impedance factor.
-            scattered /= _Z0
-        result.append(scattered)
-    return tuple(result) if field == "both" else result[0]
+    ####################################
+    # INTERNAL FIELD
+    ####################################
+    @classmethod
+    def _evaluate_internal_field(cls, particle: dict[str, Any], incident_electric_field: ComplexArray, wavelength_nm: float,
+                                 environment: Mapping[str, float | complex], prepared_interaction: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Solve the internal dipole field using the prepared interaction."""
+        if prepared_interaction is None:
+            dyads = cls._create_dyads(environment)
+            matrix, prepared_interaction = cls._interaction_matrix(particle, wavelength_nm, dyads)
+            prepared_interaction["lu"], prepared_interaction["pivots"] = cls._factorize_interaction_matrix(matrix)
 
-def evaluate_far_field(interaction_result, positions_nm, field="E"):
-    prepared = interaction_result["prepared_interaction"]
-    structure = prepared["structure"]
-    dyads = prepared["dyads"]
-    positions = np.asarray(positions_nm, dtype=np.float64)
-    polarization = np.einsum("nij,nj->ni", prepared["polarizability"], interaction_result["E_internal"])
-    green = np.zeros((len(structure.geometry), len(positions), 3, 3), dtype=np.complex64)
-    dyads.eval_G(structure.geometry, positions, dyads.G_EE_ff, prepared["wavelength_nm"], prepared["green_config"], green)
-    electric = np.einsum("nmij,nj->mi", green, polarization)
-    if field == "E":
-        return electric
+        incident = np.asarray(incident_electric_field, dtype=np.complex64)
+        internal = la.lu_solve((prepared_interaction["lu"], prepared_interaction["pivots"]), incident.reshape(-1)).reshape(-1, 3)
+        return {"E_internal": internal, "prepared_interaction": prepared_interaction}
 
-    directions = positions / np.linalg.norm(positions, axis=1)[:, None]
-    index = complex(prepared["green_config"]["eps2"])**0.5
-    # Leading outgoing-wave H = n/Z0 * (direction cross E), as in the reference.
-    magnetic = np.asarray(index / _Z0 * np.cross(directions, electric), dtype=np.complex64)
-    return (electric, magnetic) if field == "both" else magnetic
+    def solve(self, incident_electric_field: ComplexArray) -> dict[str, Any]:
+        """Solve the internal field, reusing the factorization for later beams."""
+        self.interaction_result = self._evaluate_internal_field(self.particle, incident_electric_field, self.wavelength_nm,
+                                                                self.environment, self.prepared_interaction)
+        self.prepared_interaction = self.interaction_result["prepared_interaction"]
+        return self.interaction_result
 
-def total_fields(incident_efield, incident_hfield, scattered_efield, scattered_hfield):
-    total_efield = incident_efield + scattered_efield
-    total_hfield = incident_hfield + scattered_hfield
-    return total_efield, total_hfield
+    def internal_field(self, incident_electric_field: ComplexArray) -> ComplexArray:
+        """Return the internal electric field generated by an incident field."""
+        return self.solve(incident_electric_field)["E_internal"]
+
+    ####################################
+    # SCATTERED FIELD
+    ####################################
+    @classmethod
+    def _evaluate_near_field(cls, interaction_result: dict[str, Any], positions_nm: FloatArray,
+                             field: Literal["E", "H", "both"] = "E") -> ScatteredField:
+        """Evaluate the near field from a solved interaction."""
+        prepared = interaction_result["prepared_interaction"]
+        structure = prepared["structure"]
+        dyads = prepared["dyads"]
+        positions = np.asarray(positions_nm, dtype=np.float64)
+        polarization = np.einsum("nij,nj->ni", prepared["polarizability"], interaction_result["E_internal"])
+        distances = cKDTree(structure.geometry).query(positions, k=1)[0]
+        outside = distances > 1.005 * structure.step
+        probe_positions = positions[outside]
+
+        result = []
+        for component in (("E", "H") if field == "both" else (field,)):
+            scattered = np.full((len(positions), 3), np.nan, dtype=np.complex64)
+            green = np.zeros((len(structure.geometry), len(probe_positions), 3, 3), dtype=np.complex64)
+            dyads.eval_G(structure.geometry, probe_positions, dyads.G_EE if component == "E" else dyads.G_HE, prepared["wavelength_nm"], prepared["green_config"], green)
+            scattered[outside] = np.einsum("nmij,nj->mi", green, polarization)
+            if component == "H":
+                # PyGDM's raw magnetic (B/H) response needs the SI impedance factor.
+                scattered /= cls._Z0
+            result.append(scattered)
+        return tuple(result) if field == "both" else result[0]
+
+    def near_field(self, positions_nm: FloatArray, field: Literal["E", "H", "both"] = "E") -> ScatteredField:
+        """Evaluate the scattered near field for the latest incident field."""
+        return self._evaluate_near_field(self.interaction_result, positions_nm, field=field)
+
+    @classmethod
+    def _evaluate_far_field(cls, interaction_result: dict[str, Any], positions_nm: FloatArray,
+                            field: Literal["E", "H", "both"] = "E") -> ScatteredField:
+        """Evaluate the far field from a solved interaction."""
+        prepared = interaction_result["prepared_interaction"]
+        structure = prepared["structure"]
+        dyads = prepared["dyads"]
+        positions = np.asarray(positions_nm, dtype=np.float64)
+        polarization = np.einsum("nij,nj->ni", prepared["polarizability"], interaction_result["E_internal"])
+        eps = [complex(prepared["green_config"][key]) for key in ("eps1", "eps2", "eps3")]
+        if eps[0] == eps[1] == eps[2]:
+            # The interface propagator shifts grazing angles even when all layers
+            # have the same permittivity. Use its free-space asymptotic limit here.
+            radii = np.linalg.norm(positions, axis=1)
+            if np.any(radii < prepared["wavelength_nm"]):
+                raise ValueError("Far-field observation distance must exceed the wavelength")
+            directions = positions / radii[:, None]
+            k0 = 2 * np.pi / prepared["wavelength_nm"]
+            k = k0 * np.sqrt(eps[1])
+            phase = np.exp(1j * k * (radii[None, :] - structure.geometry @ directions.T))
+            dipole_sum = (phase.T @ polarization) / radii[:, None]
+            electric = np.asarray(k0**2 * (dipole_sum - directions * np.sum(directions * dipole_sum, axis=1, keepdims=True)), dtype=np.complex64)
+        else:
+            green = np.zeros((len(structure.geometry), len(positions), 3, 3), dtype=np.complex64)
+            dyads.eval_G(structure.geometry, positions, dyads.G_EE_ff, prepared["wavelength_nm"], prepared["green_config"], green)
+            electric = np.einsum("nmij,nj->mi", green, polarization)
+        if field == "E":
+            return electric
+
+        directions = positions / np.linalg.norm(positions, axis=1)[:, None]
+        index = complex(prepared["green_config"]["eps2"])**0.5
+        # Leading outgoing-wave H = n/Z0 * (direction cross E), as in the reference.
+        magnetic = np.asarray(index / cls._Z0 * np.cross(directions, electric), dtype=np.complex64)
+        return (electric, magnetic) if field == "both" else magnetic
+
+    def far_field(self, positions_nm: FloatArray, field: Literal["E", "H", "both"] = "E") -> ScatteredField:
+        """Evaluate the scattered far field for the latest incident field."""
+        return self._evaluate_far_field(self.interaction_result, positions_nm, field=field)
+
+    ####################################
+    # TOTAL FIELD
+    ####################################
+    @staticmethod
+    def total_fields(incident_efield: ComplexArray, incident_hfield: ComplexArray, scattered_efield: ComplexArray,
+                     scattered_hfield: ComplexArray) -> tuple[ComplexArray, ComplexArray]:
+        """Add the incident and scattered electric and magnetic fields."""
+        total_efield = incident_efield + scattered_efield
+        total_hfield = incident_hfield + scattered_hfield
+        return total_efield, total_hfield
+
+
+# Existing scripts and observables still import these names.
+evaluate_internal_field = LightMatterInteraction._evaluate_internal_field
+evaluate_near_field = LightMatterInteraction._evaluate_near_field
+evaluate_far_field = LightMatterInteraction._evaluate_far_field
+total_fields = LightMatterInteraction.total_fields

@@ -1,116 +1,67 @@
-"""Compare three torque-noise methods and scan incident directions by particle size.
-
-Run one size per SLURM_ARRAY_TASK_ID (0..79). All spectral densities saved in
-the CSV files are divided by 2*pi and have units N^2 m^2/Hz.
-"""
+"""Compare three torque-noise methods and scan incident directions by particle size."""
 
 import argparse
 import os
 from pathlib import Path
 from time import perf_counter
-
 import numpy as np
 import pandas as pd
 from pyGDM2 import fields
 from scipy.constants import c, epsilon_0, hbar
 
-from optomechanics_levitation import (
-    derivative_torque_spectral_density,
-    evaluate_incident_field,
-    evaluate_internal_field,
-    particle_properties,
-    torque_spectral_density,
-)
+from optomechanics_levitation import particle_properties, evaluate_incident_field, evaluate_internal_field, derivative_torque_spectral_density, torque_spectral_density
 
-
-ASPECT_RATIO = 2.0
-MESH_DIVISIONS = 35.0
-WAVELENGTH_NM = 1550.0
-NUMERICAL_APERTURE = 0.75
-INTENSITY_W_PER_M2 = 1.0e9
-FAR_FIELD_RADIUS_NM = 1.0e6
-N_COS_THETA = 8
-N_AZIMUTH = 16
-HELICITIES = (+1, -1)
+ASPECT_RATIO = 2.0; MESH_DIVISIONS = 35.0
+WAVELENGTH_NM = 1550.0; NUMERICAL_APERTURE = 0.75; INTENSITY_W_PER_M2 = 1.0e9; FAR_FIELD_RADIUS_NM = 1.0e6
+N_COS_THETA = 8; N_AZIMUTH = 16; HELICITIES = (+1, -1)
 ENVIRONMENT = {"eps1": 1.0, "eps2": 1.0, "eps3": 1.0, "spacing": 0.0}
-OUTPUT_DIR = Path(__file__).resolve().parents[1] / "outputs" / "Recoule Heating Results"
-
-SPECTRAL_COLUMNS = (
-    "spin_N2_m2_per_Hz", "orbital_N2_m2_per_Hz",
-    "mixed_N2_m2_per_Hz", "correlation_2mixed_N2_m2_per_Hz",
-    "total_N2_m2_per_Hz",
-)
-
+OUTPUT_DIR = Path(__file__).resolve().parents[1] / "outputs" / "recoil_heating_results"
+SPECTRAL_COLUMNS = ("spin_term", "orbital_term", "correlation_term", "total_torque")
 
 def rayleigh_limit_nm():
+    """Last long axis value is in the Rayleigh range z_R"""
     focal_waist_nm = WAVELENGTH_NM / (np.pi * NUMERICAL_APERTURE)
     return np.pi * focal_waist_nm**2 / WAVELENGTH_NM
 
-
 def long_axis_values_nm():
-    # Eight sizes through 100 nm and 72 more above it: 80 near-uniform cuts.
-    return np.concatenate((
-        np.linspace(25.0, 100.0, 8),
-        np.linspace(100.0, rayleigh_limit_nm(), 73)[1:],
-    ))
+    """Long axis values for the theoretical comparison and long axis values for the exploratory analysis"""
+    return np.concatenate((np.linspace(25.0, 157.0, 15), np.linspace(157.0, rayleigh_limit_nm(), 30)[1:]))
 
-
-def militaru_torque_recoil_heating(long_radius_nm, short_radius_nm, epsilon_r):
-    """Same dipole calculation as recoil_heating_theory_vs_numerics.ipynb."""
-    a = long_radius_nm * 1e-9
-    b = short_radius_nm * 1e-9
+def theoretical_torque_recoil_heating(long_radius_nm, short_radius_nm, epsilon_r):
+    """Theoretical torque recoil heating from the point dipole approximation"""
+    a = long_radius_nm * 1e-9; b = short_radius_nm * 1e-9; volume = 4 * np.pi * a * b**2 / 3
     eccentricity = np.sqrt(1 - (b / a)**2)
-    L_x = ((1 - eccentricity**2) / (2 * eccentricity**3)
-           * (np.log((1 + eccentricity) / (1 - eccentricity)) - 2 * eccentricity))
+    L_x = ((1 - eccentricity**2) / (2 * eccentricity**3) * (np.log((1 + eccentricity) / (1 - eccentricity)) - 2 * eccentricity))
     L_y = (1 - L_x) / 2
-    volume = 4 * np.pi * a * b**2 / 3
     alpha_x = epsilon_0 * volume * (epsilon_r - 1) / (1 + L_x * (epsilon_r - 1))
     alpha_y = epsilon_0 * volume * (epsilon_r - 1) / (1 + L_y * (epsilon_r - 1))
     anisotropy_squared = ((alpha_x - alpha_y) / alpha_x)**2
-
-    E0 = np.sqrt(2 * INTENSITY_W_PER_M2 / (epsilon_0 * c))
-    omega = 2 * np.pi * c / (WAVELENGTH_NM * 1e-9)
+    E0 = np.sqrt(2 * INTENSITY_W_PER_M2 / (epsilon_0 * c)); omega = 2 * np.pi * c / (WAVELENGTH_NM * 1e-9)
     power_sc = omega**4 * alpha_x**2 * E0**2 / (12 * np.pi * epsilon_0 * c**3)
     gamma_sc = power_sc / (hbar * omega)
-    return {
-        "militaru_alpha_x_SI": alpha_x,
-        "militaru_alpha_y_SI": alpha_y,
-        "militaru_delta_alpha_over_alpha_x_squared": anisotropy_squared,
-        "militaru_gamma_sc_per_s": gamma_sc,
-        "militaru_S_tau_tau_N2_m2_per_Hz": hbar**2 * gamma_sc * anisotropy_squared / (2 * np.pi),
-    }
-
+    S_tau_tau = hbar**2 * gamma_sc * anisotropy_squared / (2 * np.pi)
+    return {"anisotropy_term": anisotropy_squared, "theoretical_torque_recoil_heating": S_tau_tau}
 
 def directional_plane_wave(pos, env_dict, wavelength, direction, helicity, returnField="E"):
-    """Circular incident beam from torque_components_distribution.ipynb."""
+    """Generate a plane wave with circular polarization from helicity"""
     direction = np.asarray(direction, dtype=float)
     direction = direction / np.linalg.norm(direction)
     reference = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
     e1 = reference - np.dot(reference, direction) * direction
-    e1 = e1 / np.linalg.norm(e1)
-    e2 = np.cross(direction, e1)
+    e1 = e1 / np.linalg.norm(e1); e2 = np.cross(direction, e1)
     polarization = (e1 + 1j * helicity * e2) / np.sqrt(2)
-    electric = np.exp(2j * np.pi / wavelength * (np.asarray(pos) @ direction))[:, None] * polarization
-    return electric if returnField.lower() == "e" else np.cross(direction, electric) / c
-
+    e_field = np.exp(2j * np.pi / wavelength * (np.asarray(pos) @ direction))[:, None] * polarization 
+    return e_field
 
 def make_particle(long_axis_nm):
-    step_nm = long_axis_nm / MESH_DIVISIONS
-    long_radius_nm = long_axis_nm / 2
-    short_radius_nm = long_radius_nm / ASPECT_RATIO
-    particle = particle_properties(
-        particle_type="spheroid", material_name="sio2", step_nm=step_nm,
-        mesh="cube", center=True,
-        R1=long_radius_nm / step_nm - 0.2,
-        R2=short_radius_nm / step_nm - 0.2,
-        R3=short_radius_nm / step_nm - 0.2,
-    )
+    step_nm = long_axis_nm / MESH_DIVISIONS; long_radius_nm = long_axis_nm / 2; short_radius_nm = long_radius_nm / ASPECT_RATIO
+    particle = particle_properties(particle_type="spheroid", material_name="sio2", step_nm=step_nm, mesh="cube", center=True, 
+                                   R1=long_radius_nm / step_nm - 0.2, R2=short_radius_nm / step_nm - 0.2, R3=short_radius_nm / step_nm - 0.2)
     return particle, step_nm
 
-
 def solve(particle, generator, parameters, prepared_interaction=None):
-    incident_field = evaluate_incident_field(
-        field_generator=generator, positions_nm=particle["geometry_nm"], field="E", **parameters)
+    """Calculate internal interactions"""
+    incident_field = evaluate_incident_field(field_generator=generator, positions_nm=particle["geometry_nm"], field="E", **parameters)
     return evaluate_internal_field(
         particle=particle if prepared_interaction is None else None,
         incident_electric_field=incident_field,

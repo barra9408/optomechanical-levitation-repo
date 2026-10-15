@@ -8,7 +8,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 import optomechanics_levitation as oml
 
-LONG_AXIS_NM = 100.0; ASPECT_RATIO = 2.0; MESH_DIVISIONS = 35.0
+LONG_AXIS_NM = 877.0; ASPECT_RATIO = 2.0; MESH_DIVISIONS = 35.0
 N_COS_THETA = 12; N_AZIMUTH = 24
 HG_SPECTRUM_GRID = 96; HG_SPECTRUM_SPAN_WAVELENGTHS = 16.0
 HELICITY = oml.parameters.HELICITIES[0]
@@ -27,7 +27,7 @@ class AngularScan:
                                                        environment=oml.parameters.ENVIRONMENT, torque_axis=oml.parameters.TORQUE_AXIS,
                                                        n_theta=oml.parameters.SPECTRAL_N_THETA, n_phi=oml.parameters.SPECTRAL_N_PHI,
                                                        radius_wavelengths=oml.parameters.FAR_FIELD_RADIUS_NM / oml.parameters.WAVELENGTH_NM)
-        filename = {"plane-wave": "plane_wave_info_patterns.csv", "hermite-gauss": "hermite_gauss_info_patterns.csv"}[beam]
+        filename = {"plane-wave": "plane_wave_info_patterns_877nm.csv", "hermite-gauss": "hermite_gauss_info_patterns_877nm.csv"}[beam]
         self.output_path = OUTPUT_DIR / filename
         self.partial_path = OUTPUT_DIR / filename.replace(".csv", ".sigma_plus.partial.csv")
 

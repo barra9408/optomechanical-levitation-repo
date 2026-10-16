@@ -4,6 +4,7 @@ from .light_matter_interaction import LightMatterInteraction, evaluate_internal_
 from .observables import maxwell_stress_tensor, spherical_integration_surface, evaluate_force, evaluate_torque, derivative_torque_spectral_density, force_spectral_density, torque_spectral_density
 from .recoil_heating import TheoreticalTorqueRecoilHeating, DerivativeTorqueRecoilHeating, SpectralTorqueRecoilHeating
 from .optical_fields.hermitegauss00 import HermiteGauss00
+from .optical_fields.laguerregaus import LaguerreGauss01
 from .optical_fields.planewave import PlaneWave
 from . import parameters
 
@@ -30,6 +31,7 @@ __all__ = [
     "DerivativeTorqueRecoilHeating",
     "SpectralTorqueRecoilHeating",
     "HermiteGauss00",
+    "LaguerreGauss01",
     "PlaneWave",
     "parameters",
 ]

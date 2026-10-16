@@ -7,17 +7,22 @@ from scipy.constants import c, epsilon_0, hbar
 from .incident_field import evaluate_incident_field
 from .light_matter_interaction import LightMatterInteraction
 from .optical_fields.hermitegauss00 import HermiteGauss00
+from .optical_fields.laguerregaus import LaguerreGauss01
 from .optical_fields.planewave import Axis, PlaneWave
 from .particle import rotate_particle
 from . import parameters as p
 
 FloatArray = NDArray[np.float64]; ComplexArray = NDArray[np.complex128]; Particle = dict[str, Any]
-Environment = Mapping[str, float | complex]; FieldGenerator = Callable[..., ComplexArray] | PlaneWave | HermiteGauss00
+Environment = Mapping[str, float | complex]; FieldGenerator = Callable[..., ComplexArray] | PlaneWave | HermiteGauss00 | LaguerreGauss01
 AngularData = dict[str, FloatArray]; Components = tuple[float, float, float, float]
 Spectrum = dict[str, FloatArray | ComplexArray]
 
 class TheoreticalTorqueRecoilHeating:
-    """Point-dipole torque recoil heating of a prolate spheroid in a plane wave."""
+    """Point-dipole torque recoil heating of a prolate spheroid.
+
+    With no field argument, use the original x-polarized plane-wave intensity.
+    An explicit field gives the local point-dipole prediction for that beam.
+    """
     def __init__(self, long_radius_nm: float, short_radius_nm: float, epsilon_r: float, wavelength_nm: float = p.WAVELENGTH_NM,
                  intensity_w_per_m2: float = p.INTENSITY_W_PER_M2) -> None:
         self.long_radius_nm = float(long_radius_nm); self.short_radius_nm = float(short_radius_nm)
@@ -37,14 +42,35 @@ class TheoreticalTorqueRecoilHeating:
     ####################################
     # THEORETICAL TORQUE NOISE
     ####################################
-    def compute(self) -> dict[str, float]:
-        """Return (Δα/α∥)² and the theoretical torque recoil heating."""
+    def compute(self, electric_field_v_per_m: ComplexArray | None = None, *,
+                torque_axis: Axis = p.TORQUE_AXIS) -> dict[str, float]:
+        """Return (Δα/α∥)² and recoil heating for a local electric field.
+
+        The long particle axis is x. Rotating its dipole polarizability about
+        ``torque_axis`` gives the induced-dipole derivative used here. Spatial
+        variation of the beam across the particle is outside this model.
+        """
         alpha_parallel, alpha_perpendicular = self._polarizabilities(); anisotropy_term = ((alpha_parallel - alpha_perpendicular) / alpha_parallel)**2
-        electric_amplitude = np.sqrt(2 * self.intensity_w_per_m2 / (epsilon_0 * c))
+        if electric_field_v_per_m is None:
+            electric_amplitude = np.sqrt(2 * self.intensity_w_per_m2 / (epsilon_0 * c))
+            electric_field = np.array((electric_amplitude, 0, 0), dtype=complex)
+        else:
+            electric_field = np.asarray(electric_field_v_per_m, dtype=complex)
+            if electric_field.shape != (3,):
+                raise ValueError("electric_field_v_per_m must have shape (3,)")
+        if torque_axis not in ("x", "y", "z"):
+            raise ValueError("torque_axis must be x, y, or z")
+        long_axis = np.array((1.0, 0.0, 0.0))
+        axis_vector = np.eye(3)["xyz".index(torque_axis)]
+        rotated_axis_derivative = np.cross(axis_vector, long_axis)
+        dipole_derivative = (alpha_parallel - alpha_perpendicular) * (
+            rotated_axis_derivative * electric_field[0]
+            + long_axis * np.dot(rotated_axis_derivative, electric_field)
+        )
         omega = 2 * np.pi * c / (self.wavelength_nm * 1e-9)
-        power_sc = omega**4 * alpha_parallel**2 * electric_amplitude**2 / (12 * np.pi * epsilon_0 * c**3)
-        gamma_sc = power_sc / (hbar * omega)
-        total_torque = hbar**2 * gamma_sc * anisotropy_term / (2 * np.pi)
+        power_derivative = omega**4 * np.vdot(dipole_derivative, dipole_derivative).real / (12 * np.pi * epsilon_0 * c**3)
+        gamma_derivative = power_derivative / (hbar * omega)
+        total_torque = hbar**2 * gamma_derivative / (2 * np.pi)
         return {"anisotropy_term": float(anisotropy_term), "total_torque": float(total_torque)}
 
 

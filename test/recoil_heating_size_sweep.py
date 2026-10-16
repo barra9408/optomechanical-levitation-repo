@@ -1,4 +1,4 @@
-"""Compare recoil-heating methods and angular contribution shares across particle sizes."""
+"""Compare recoil-heating methods and angular contribution shares for linear x polarization."""
 
 import argparse
 import csv
@@ -11,6 +11,7 @@ import optomechanics_levitation as oml
 
 ASPECT_RATIO = 2.0; MESH_DIVISIONS = 35.0
 N_COS_THETA = 12; N_AZIMUTH = 24; THEORY_LIMIT_NM = 157.0
+LINEAR_X_HELICITY = 0
 OUTPUT_DIR = Path(__file__).resolve().parents[1] / "outputs" / "recoil_heating_results"
 CSV_COLUMNS = ("helicity", "direction_x", "direction_y", "direction_z", "spin", "orbital", "correlation")
 RESULT_COLUMNS = ("long_axis_nm", "helicity", "D", "anisotropy_term", "theoretical_torque_total_torque", "derivative_total_torque",
@@ -27,7 +28,7 @@ def long_axis_values_nm() -> np.ndarray:
     return np.r_[np.linspace(25.0, THEORY_LIMIT_NM, 15), np.linspace(THEORY_LIMIT_NM, rayleigh_limit_nm(), 30)[1:]]
 
 class SizeSweep:
-    """Calculate one particle size, both fixed helicities, and their angular contributions."""
+    """Calculate one particle size with linear x polarization and its angular contributions."""
     def __init__(self, case_id: int, long_axis_nm: float) -> None:
         self.case_id = case_id; self.long_axis_nm = long_axis_nm
         self.step_nm = long_axis_nm / MESH_DIVISIONS; long_radius_nm = long_axis_nm / 2
@@ -38,8 +39,7 @@ class SizeSweep:
                                                R3=short_radius_nm / self.step_nm - 0.2)
         self.center_nm = np.mean(self.particle["geometry_nm"], axis=0)
         self.amplitude = np.sqrt(2 * oml.parameters.INTENSITY_W_PER_M2 / (epsilon_0 * c))
-        self.beams = {helicity: oml.PlaneWave((0.0, 0.0, 1.0), (1.0, 1j * helicity)).field
-                      for helicity in oml.parameters.HELICITIES}
+        self.beams = {LINEAR_X_HELICITY: oml.PlaneWave((0.0, 0.0, 1.0), (1.0, 0.0)).field}
         self.spectra = {}
         self.derivative = oml.DerivativeTorqueRecoilHeating(self.particle, wavelength_nm=oml.parameters.WAVELENGTH_NM,
                                                            environment=oml.parameters.ENVIRONMENT, rotation_axes=(oml.parameters.TORQUE_AXIS,))
@@ -49,31 +49,31 @@ class SizeSweep:
                                                        radius_wavelengths=oml.parameters.FAR_FIELD_RADIUS_NM / oml.parameters.WAVELENGTH_NM)
         self.cos_theta = -1 + (np.arange(N_COS_THETA) + 0.5) * 2 / N_COS_THETA
         self.azimuth = (np.arange(N_AZIMUTH) + 0.5) * 2 * np.pi / N_AZIMUTH
-        self.output_path = OUTPUT_DIR / f"planewave_recoilheating_{long_axis_nm:.6f}nm.csv"
-        self.partial_path = OUTPUT_DIR / f"planewave_recoilheating_{long_axis_nm:.6f}nm.partial.csv"
+        self.output_path = OUTPUT_DIR / f"planewave_linear_x_recoilheating_{long_axis_nm:.6f}nm.csv"
+        self.partial_path = OUTPUT_DIR / f"planewave_linear_x_recoilheating_{long_axis_nm:.6f}nm.partial.csv"
 
     ####################################
     # INCIDENT PLANE WAVES
     ####################################
     @staticmethod
     def _beam_frame(direction: np.ndarray) -> np.ndarray:
-        """Return the same local frame used by the angular-scan experiment."""
+        """Project laboratory x into the plane transverse to the incident direction."""
         direction = np.array(direction, dtype=float, copy=True); direction /= np.linalg.norm(direction)
-        reference = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+        reference = np.array([1.0, 0.0, 0.0]) if abs(direction[0]) < 1 - 1e-12 else np.array([0.0, 1.0, 0.0])
         x_axis = reference - np.dot(reference, direction) * direction; x_axis /= np.linalg.norm(x_axis)
         return np.column_stack((x_axis, np.cross(direction, x_axis), direction))
 
     def _rotated_field(self, pos: np.ndarray, env_dict: dict, wavelength: float, beam_helicity: int,
                        beam_direction: tuple, beam_origin_nm: tuple, returnField: str = "E") -> np.ndarray:
-        """Rotate a circular plane wave from its local frame into the laboratory frame."""
+        """Rotate a locally x-polarized plane wave into the laboratory frame."""
         frame = self._beam_frame(beam_direction)
         local_positions = (np.asarray(pos) - np.asarray(beam_origin_nm)) @ frame
         return self.beams[beam_helicity](local_positions, env_dict, wavelength, returnField=returnField) @ frame.T
 
     def _spectrum(self, helicity: int) -> dict:
-        """Sample each helicity's numerical angular spectrum once per particle size."""
+        """Sample the linear x beam's numerical angular spectrum once per particle size."""
         if helicity not in self.spectra:
-            print(f"[SPECTRUM] Sampling numerical modes for σ={helicity:+d}", flush=True)
+            print("[SPECTRUM] Sampling numerical modes for linear x polarization", flush=True)
             self.spectra[helicity] = self.spectral.incident_angular_spectrum(
                 self.beams[helicity], amplitude_v_per_m=self.amplitude, center_nm=np.zeros(3),
                 input_grid=oml.parameters.INPUT_GRID, input_span_wavelengths=oml.parameters.INPUT_SPAN_WAVELENGTHS)
@@ -102,12 +102,12 @@ class SizeSweep:
         return result
 
     def _fixed_incidence(self, helicity: int, theory: dict | None) -> dict:
-        """Compare derivative and spectral torque for one +z incident helicity."""
+        """Compare derivative and spectral torque for +z incidence polarized along x."""
         started = perf_counter(); direction = np.array((0.0, 0.0, 1.0))
-        print(f"[FIXED σ={helicity:+d}] Derivative model, axis={oml.parameters.TORQUE_AXIS}", flush=True)
+        print(f"[FIXED linear x] Derivative model, axis={oml.parameters.TORQUE_AXIS}", flush=True)
         derivative = self.derivative.compute(self._rotated_field, amplitude_v_per_m=self.amplitude, beam_helicity=helicity,
                                              beam_direction=tuple(direction), beam_origin_nm=tuple(self.center_nm))
-        print(f"[FIXED σ={helicity:+d}] Spectral model", flush=True)
+        print("[FIXED linear x] Spectral model", flush=True)
         spectral = self._spectral_result(helicity, direction)
         axis = oml.parameters.TORQUE_AXIS
         row = {"long_axis_nm": self.long_axis_nm, "helicity": helicity, "D": derivative["D"][axis],
@@ -116,7 +116,7 @@ class SizeSweep:
                "derivative_total_torque": derivative["total_torque"][axis],
                "spectral_total_torque": spectral["total_torque"], "spin_term": spectral["spin_term"],
                "orbital_term": spectral["orbital_term"], "correlation_term": spectral["correlation_term"]}
-        print(f"[FIXED σ={helicity:+d}] D={row['D']:.6e}, derivative={row['derivative_total_torque']:.6e}, "
+        print(f"[FIXED linear x] D={row['D']:.6e}, derivative={row['derivative_total_torque']:.6e}, "
               f"spectral={row['spectral_total_torque']:.6e} ({(perf_counter() - started) / 60:.1f} min)", flush=True)
         return row
 
@@ -157,18 +157,18 @@ class SizeSweep:
         return statistics
 
     def _contribution_scan(self, existing: list[dict]) -> dict[int, dict[str, float]]:
-        """Scan both helicities and summarize their spin, orbital, and correlation shares."""
+        """Scan incident directions and summarize the linear beam's torque shares."""
         completed = {self._row_key(row) for row in existing}
-        total = len(oml.parameters.HELICITIES) * N_COS_THETA * N_AZIMUTH; done = len(completed)
+        total = len(self.beams) * N_COS_THETA * N_AZIMUTH; done = len(completed)
         started = perf_counter()
-        print(f"[CONTRIBUTIONS] incident grid={N_COS_THETA} x {N_AZIMUTH} x {len(oml.parameters.HELICITIES)} helicities; "
+        print(f"[CONTRIBUTIONS] incident grid={N_COS_THETA} x {N_AZIMUTH} x {len(self.beams)} polarization; "
               f"{done}/{total} complete", flush=True)
 
         with self.partial_path.open("a", newline="") as file:
             writer = csv.DictWriter(file, fieldnames=CSV_COLUMNS)
             if file.tell() == 0:
                 writer.writeheader(); file.flush()
-            for helicity in oml.parameters.HELICITIES:
+            for helicity in self.beams:
                 for i in range(N_COS_THETA):
                     for j in range(N_AZIMUTH):
                         u = self.cos_theta[i]; phi = self.azimuth[j]
@@ -178,7 +178,7 @@ class SizeSweep:
                             continue
                         row = self._row(helicity, direction, self._spectral_result(helicity, direction))
                         writer.writerow(row); file.flush(); completed.add(key); done += 1
-                        print(f"[CONTRIBUTIONS {done}/{total}] remaining={total - done}, σ={helicity:+d}, "
+                        print(f"[CONTRIBUTIONS {done}/{total}] remaining={total - done}, linear x, "
                               f"i={i + 1}/{N_COS_THETA}, j={j + 1}/{N_AZIMUTH}, "
                               f"elapsed={(perf_counter() - started) / 60:.1f} min", flush=True)
 
@@ -186,13 +186,13 @@ class SizeSweep:
         if len(rows) != total:
             raise RuntimeError("Incomplete contribution scan; the partial CSV was retained for resumption")
         return {helicity: self._contribution_statistics([row for row in rows if row["helicity"] == helicity])
-                for helicity in oml.parameters.HELICITIES}
+                for helicity in self.beams}
 
     ####################################
     # SIZE-SWEEP OUTPUT
     ####################################
     def run(self) -> Path:
-        """Write one CSV for this size with two helicity rows and their shares."""
+        """Write one CSV row for this size with linear x polarization and its shares."""
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         if self.output_path.exists():
             with self.output_path.open(newline="") as file:
@@ -203,13 +203,13 @@ class SizeSweep:
         print(f"[CASE {self.case_id + 1}/{len(long_axis_values_nm())}] long axis={self.long_axis_nm:.6f} nm, "
               f"dipoles={len(self.particle['geometry_nm'])}, existing angular samples={len(existing)}", flush=True)
         theory = self._theoretical_result()
-        positive = self._fixed_incidence(+1, theory); negative = self._fixed_incidence(-1, theory)
+        linear_x = self._fixed_incidence(LINEAR_X_HELICITY, theory)
         statistics = self._contribution_scan(existing)
-        positive.update(statistics[+1]); negative.update(statistics[-1])
+        linear_x.update(statistics[LINEAR_X_HELICITY])
 
         temporary = self.output_path.with_suffix(".tmp")
         with temporary.open("w", newline="") as file:
-            writer = csv.DictWriter(file, fieldnames=RESULT_COLUMNS); writer.writeheader(); writer.writerows((positive, negative))
+            writer = csv.DictWriter(file, fieldnames=RESULT_COLUMNS); writer.writeheader(); writer.writerow(linear_x)
         os.replace(temporary, self.output_path); self.partial_path.unlink()
         print(f"[COMPLETE] {self.output_path} ({(perf_counter() - started) / 60:.1f} min)", flush=True)
         return self.output_path

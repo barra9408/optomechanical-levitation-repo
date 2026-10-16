@@ -7,13 +7,13 @@ from scipy.constants import c, epsilon_0, hbar
 from .incident_field import evaluate_incident_field
 from .light_matter_interaction import LightMatterInteraction
 from .optical_fields.hermitegauss00 import HermiteGauss00
-from .optical_fields.laguerregaus import LaguerreGauss01
+from .optical_fields.laguerregaus import LaguerreGauss01, LaguerreGauss02
 from .optical_fields.planewave import Axis, PlaneWave
 from .particle import rotate_particle
 from . import parameters as p
 
 FloatArray = NDArray[np.float64]; ComplexArray = NDArray[np.complex128]; Particle = dict[str, Any]
-Environment = Mapping[str, float | complex]; FieldGenerator = Callable[..., ComplexArray] | PlaneWave | HermiteGauss00 | LaguerreGauss01
+Environment = Mapping[str, float | complex]; FieldGenerator = Callable[..., ComplexArray] | PlaneWave | HermiteGauss00 | LaguerreGauss01 | LaguerreGauss02
 AngularData = dict[str, FloatArray]; Components = tuple[float, float, float, float]
 Spectrum = dict[str, FloatArray | ComplexArray]
 

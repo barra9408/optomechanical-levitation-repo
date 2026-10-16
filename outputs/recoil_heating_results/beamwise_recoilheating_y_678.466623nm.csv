@@ -1,0 +1,2 @@
+long_axis_nm,beam,direction_x,direction_y,direction_z,incident_amplitude_v_per_m,numerical_source,D,anisotropy_term,theoretical_total_torque,derivative_total_torque,spectral_total_torque,spin_term,orbital_term,correlation_term
+678.4666234655868,laguerre_gauss_02,0.0,0.0,1.0,2222.0728643982993,computed,0.02283462798945261,0.03223952658349601,2.907581562432981e-58,4.4494271965008586e-58,4.432429778284163e-58,9.240021106021128e-57,1.1739733049164597e-56,-2.0536511177357307e-56

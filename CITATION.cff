@@ -1,0 +1,9 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using these metadata."
+authors:
+  - family-names: "Gutierrez-Bernal"
+    given-names: "Sebastian"
+title: "Optomechanical Levitation"
+version: "0.1.0"
+url: "https://github.com/barra9408/optomechanical-levitation-repo"
+repository-code: "https://github.com/barra9408/optomechanical-levitation-repo"

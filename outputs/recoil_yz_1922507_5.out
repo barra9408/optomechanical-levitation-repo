@@ -1,0 +1,67 @@
+Running SLURM prolog script on ruby062
+===============================================================================
+Job started on Tue Oct 20 08:06:46 BST 2026
+Job ID          : 1922516
+Job name        : recoil_yz_sweep
+WorkDir         : /iridisfs/home/sgb1u26/optomechanics-levitation
+Command         : /iridisfs/home/sgb1u26/optomechanics-levitation/requests/recoil_heating_size_sweep.sh
+Partition       : amd
+Num hosts       : 1
+Num cores       : 4
+Num of tasks    : 1
+Hosts allocated : ruby062
+Job Output Follows ...
+===============================================================================
+[CASE 6/44] long axis=72.142857 nm, aspect ratio=2, dipoles=5627, saved Y=4/4, Z=4/4
+[COMPLETE] {'y': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/beamwise_recoilheating_y_72.142857nm.csv'), 'z': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/beamwise_recoilheating_z_72.142857nm.csv')}
+[CASE 6/44] long axis=72.142857 nm, aspect ratio=4, dipoles=1423, saved Y=0/4, Z=0/4
+[plane_wave_x] derivative, axes=('y', 'z')
+[plane_wave_x] incident spectrum (48 x 48)
+[plane_wave_x, y] spectral
+[plane_wave_x, y] theoretical=2.349371e-63, derivative=2.386643e-63, spectral=2.387085e-63
+[plane_wave_x, z] spectral
+[plane_wave_x, z] theoretical=2.349371e-63, derivative=2.386999e-63, spectral=2.387079e-63
+[plane_wave_x] complete in 0.2 min
+[hermite_gauss_00_x] derivative, axes=('y', 'z')
+[hermite_gauss_00_x] incident spectrum (96 x 96)
+[hermite_gauss_00_x, y] spectral
+[hermite_gauss_00_x, y] theoretical=2.349371e-63, derivative=2.390941e-63, spectral=2.390845e-63
+[hermite_gauss_00_x, z] spectral
+[hermite_gauss_00_x, z] theoretical=2.349371e-63, derivative=2.386277e-63, spectral=2.385821e-63
+[hermite_gauss_00_x] complete in 0.1 min
+[laguerre_gauss_01] derivative, axes=('y', 'z')
+[laguerre_gauss_01] incident spectrum (96 x 96)
+[laguerre_gauss_01, y] spectral
+[laguerre_gauss_01, y] theoretical=7.655659e-64, derivative=7.927482e-64, spectral=7.920560e-64
+[laguerre_gauss_01, z] spectral
+[laguerre_gauss_01, z] theoretical=2.498004e-100, derivative=7.611564e-68, spectral=7.607642e-68
+[laguerre_gauss_01] complete in 0.1 min
+[laguerre_gauss_02] derivative, axes=('y', 'z')
+[laguerre_gauss_02] incident spectrum (96 x 96)
+[laguerre_gauss_02, y] spectral
+[laguerre_gauss_02, y] theoretical=7.684378e-65, derivative=7.624081e-65, spectral=7.586460e-65
+[laguerre_gauss_02, z] spectral
+[laguerre_gauss_02, z] theoretical=1.535944e-64, derivative=1.600072e-64, spectral=1.598247e-64
+[laguerre_gauss_02] complete in 0.1 min
+[COMPLETE] {'y': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/ar4/beamwise_recoilheating_y_72.142857nm.csv'), 'z': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/ar4/beamwise_recoilheating_z_72.142857nm.csv')}
+==============================================================================
+Running epilogue script on ruby062.
+
+Submit time  : 2026-10-20T08:06:08
+Start time   : 2026-10-20T08:06:46
+End time     : 2026-10-20T08:09:13
+Elapsed time : 00:02:27 (Timelimit=2-00:00:00)
+
+Job ID: 1922516
+Array Job ID: 1922507_5
+Cluster: iridis_x
+User/Group: sgb1u26/wf
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 4
+CPU Utilized: 00:08:19
+CPU Efficiency: 84.86% of 00:09:48 core-walltime
+Job Wall-clock time: 00:02:27
+Memory Utilized: 4.53 GB
+Memory Efficiency: 7.08% of 64.00 GB (64.00 GB/node)
+

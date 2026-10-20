@@ -1,0 +1,46 @@
+Running SLURM prolog script on ruby053.cluster.local
+===============================================================================
+Job started on Tue Oct 20 08:21:47 BST 2026
+Job ID          : 1922507
+Job name        : recoil_yz_sweep
+WorkDir         : /iridisfs/home/sgb1u26/optomechanics-levitation
+Command         : /iridisfs/home/sgb1u26/optomechanics-levitation/requests/recoil_heating_size_sweep.sh
+Partition       : amd
+Num hosts       : 1
+Num cores       : 4
+Num of tasks    : 1
+Hosts allocated : ruby053
+Job Output Follows ...
+===============================================================================
+[CASE 44/44] long axis=877.120575 nm, aspect ratio=2, dipoles=5627, saved Y=4/4, Z=4/4
+[COMPLETE] {'y': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/beamwise_recoilheating_y_877.120575nm.csv'), 'z': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/beamwise_recoilheating_z_877.120575nm.csv')}
+[CASE 44/44] long axis=877.120575 nm, aspect ratio=4, dipoles=1423, saved Y=0/4, Z=0/4
+[plane_wave_x] derivative, axes=('y', 'z')
+[plane_wave_x] incident spectrum (48 x 48)
+[plane_wave_x, y] spectral
+[plane_wave_x, y] theoretical=7.588350e-57, derivative=1.985348e-56, spectral=1.985635e-56
+[plane_wave_x, z] spectral
+[plane_wave_x, z] theoretical=7.588350e-57, derivative=1.469040e-56, spectral=1.469094e-56
+[plane_wave_x] complete in 0.2 min
+[hermite_gauss_00_x] derivative, axes=('y', 'z')
+[hermite_gauss_00_x] incident spectrum (96 x 96)
+[hermite_gauss_00_x, y] spectral
+[hermite_gauss_00_x, y] theoretical=7.588350e-57, derivative=1.945184e-56, spectral=1.945034e-56
+[hermite_gauss_00_x, z] spectral
+[hermite_gauss_00_x, z] theoretical=7.588350e-57, derivative=1.380806e-56, spectral=1.380570e-56
+[hermite_gauss_00_x] complete in 0.1 min
+[laguerre_gauss_01] derivative, axes=('y', 'z')
+[laguerre_gauss_01] incident spectrum (96 x 96)
+[laguerre_gauss_01, y] spectral
+[laguerre_gauss_01, y] theoretical=2.472740e-57, derivative=1.882382e-56, spectral=1.881896e-56
+[laguerre_gauss_01, z] spectral
+[laguerre_gauss_01, z] theoretical=8.068426e-94, derivative=4.102811e-57, spectral=4.100420e-57
+[laguerre_gauss_01] complete in 0.2 min
+[laguerre_gauss_02] derivative, axes=('y', 'z')
+[laguerre_gauss_02] incident spectrum (96 x 96)
+[laguerre_gauss_02, y] spectral
+[laguerre_gauss_02, y] theoretical=2.482016e-58, derivative=8.283130e-58, spectral=8.248636e-58
+[laguerre_gauss_02, z] spectral
+[laguerre_gauss_02, z] theoretical=4.961023e-58, derivative=6.482414e-57, spectral=6.486205e-57
+[laguerre_gauss_02] complete in 0.2 min
+[COMPLETE] {'y': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/ar4/beamwise_recoilheating_y_877.120575nm.csv'), 'z': PosixPath('/iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/ar4/beamwise_recoilheating_z_877.120575nm.csv')}

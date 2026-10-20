@@ -128,7 +128,7 @@ class DerivativeTorqueRecoilHeating:
     ####################################
     def compute(self, field_generator: FieldGenerator, *, amplitude_v_per_m: float,
                 **beam_parameters: Any) -> dict[str, dict[str, float]]:
-        """Return D, and S_ττ for each requested rotation axis."""
+        """Return Γ_sc, D, and S_ττ for each requested rotation axis."""
         beam_parameters.update({key: tuple(beam_parameters[key]) for key in beam_parameters.keys() & {"direction"}})
         parameters = {"wavelength_nm": self.wavelength_nm, "environment": self.environment, "amplitude_v_per_m": amplitude_v_per_m,
                       **beam_parameters}
@@ -141,7 +141,7 @@ class DerivativeTorqueRecoilHeating:
             gamma_derivative = self._scattering_rate(field_derivative)
             D[axis] = gamma_derivative / gamma_sc
             total_torque[axis] = hbar**2 * gamma_derivative / (2 * np.pi)
-        return {"D": D, "total_torque": total_torque}
+        return {"Gamma_sc": gamma_sc, "D": D, "total_torque": total_torque}
 
 
 class SpectralTorqueRecoilHeating:
@@ -166,7 +166,7 @@ class SpectralTorqueRecoilHeating:
 
     def compute(self, field_generator: FieldGenerator, *, amplitude_v_per_m: float, return_angular: bool = p.DEFAULT_RETURN_ANGULAR,
                 incident_spectrum: Spectrum | None = p.DEFAULT_INCIDENT_SPECTRUM, **beam_parameters: Any) -> dict[str, Any]:
-        """Returns total torque, spin, orbital, and correlation contribution."""        
+        """Return torque contributions and the mean scattering rate."""
         beam_parameters.update({key: tuple(beam_parameters[key]) for key in beam_parameters.keys() & {"direction"}})
         parameters = {"wavelength_nm": self.wavelength_nm, "environment": self.environment, "amplitude_v_per_m": amplitude_v_per_m, 
                       **beam_parameters}
@@ -181,15 +181,34 @@ class SpectralTorqueRecoilHeating:
                                                         torque_axis=self.torque_axis, radius_wavelengths=self.radius_wavelengths, 
                                                         n_theta=self.n_theta, n_phi=self.n_phi, input_grid=self.input_grid, 
                                                         input_span_wavelengths=self.input_span_wavelengths, chunk_size=self.chunk_size, 
-                                                        return_angular=return_angular, incident_spectrum=incident_spectrum)
+                                                        return_angular=return_angular, incident_spectrum=incident_spectrum,
+                                                        return_scattering_rate=True)
         # Return each torque recoil heating term and their integrated values along every direction (if requested)
         # The latter is useful to calculate the information patterns of the torque noise
-        (total, spin, orbital, correlation), angular = calculation if return_angular else (calculation, None)
+        if return_angular:
+            (total, spin, orbital, correlation), angular, gamma_sc = calculation
+        else:
+            (total, spin, orbital, correlation), gamma_sc = calculation
+            angular = None
         scale = 1 / (2 * np.pi) # Scale factor used in the theoretical model 
-        result = {"total_torque": total * scale, "spin_term": spin * scale, "orbital_term": orbital * scale, "correlation_term": 2 * correlation * scale}
+        result = {"total_torque": total * scale, "spin_term": spin * scale, "orbital_term": orbital * scale,
+                  "correlation_term": 2 * correlation * scale, "Gamma_sc": gamma_sc}
         if return_angular:
             result["angular"] = angular
         return result
+
+    def scattering_rate(self, field_generator: FieldGenerator, *, amplitude_v_per_m: float,
+                        incident_spectrum: Spectrum | None = None, **beam_parameters: Any) -> float:
+        """Compute only the spectral method's mean scattering rate [s⁻¹]."""
+        parameters = {"wavelength_nm": self.wavelength_nm, "environment": self.environment,
+                      "amplitude_v_per_m": amplitude_v_per_m, **beam_parameters}
+        incident_field = evaluate_incident_field(field_generator, self.particle["geometry_nm"], field="E", **parameters)
+        self._interaction.internal_field(incident_field)
+        _, _, domega, outgoing, _, _ = self._scattering_data(
+            self._interaction, field_generator, parameters, self.torque_axis,
+            self.radius_wavelengths, self.n_theta, self.n_phi, self.input_grid,
+            self.input_span_wavelengths, self.chunk_size, incident_spectrum=incident_spectrum)
+        return float(self._angular_inner_product(outgoing, outgoing, domega).real)
     
     ####################################
     # SCATTERING FIELD
@@ -422,7 +441,8 @@ class SpectralTorqueRecoilHeating:
                                      n_phi: int = p.SPECTRAL_N_PHI, input_grid: int = p.INPUT_GRID,
                                      input_span_wavelengths: float = p.INPUT_SPAN_WAVELENGTHS, chunk_size: int = p.CHUNK_SIZE,
                                      return_angular: bool = p.DEFAULT_RETURN_ANGULAR, 
-                                     incident_spectrum: Spectrum | None = p.DEFAULT_INCIDENT_SPECTRUM) -> Components | tuple[Components, AngularData]:
+                                     incident_spectrum: Spectrum | None = p.DEFAULT_INCIDENT_SPECTRUM,
+                                     return_scattering_rate: bool = False) -> Any:
         spectrum, directions_out, domega_out, outgoing, scatter, _ = cls._scattering_data(interaction, field_generator,
                                                                                            incident_parameters, torque_axis,
                                                                                            radius_wavelengths, n_theta, n_phi, input_grid,
@@ -437,8 +457,9 @@ class SpectralTorqueRecoilHeating:
         correlation = hbar**2 * cls._angular_inner_product(orbital_transfer, spin_transfer, domega_out).real
         total = spin + orbital + 2 * correlation
         components = (float(total), float(spin), float(orbital), float(correlation))
+        gamma_sc = float(cls._angular_inner_product(outgoing, outgoing, domega_out).real)
         if not return_angular:
-            return components
+            return (components, gamma_sc) if return_scattering_rate else components
 
         scale = hbar**2 / (2 * np.pi)
         spin_density = scale * np.sum(np.abs(spin_transfer)**2, axis=-1)
@@ -446,4 +467,4 @@ class SpectralTorqueRecoilHeating:
         correlated_density = 2 * scale * np.sum(np.conj(orbital_transfer) * spin_transfer, axis=-1).real
         angular = {"directions": directions_out, "domega": domega_out, "spin": spin_density, "orbital": orbital_density, 
                    "correlation": correlated_density, "total": spin_density + orbital_density + correlated_density}
-        return components, angular
+        return (components, angular, gamma_sc) if return_scattering_rate else (components, angular)

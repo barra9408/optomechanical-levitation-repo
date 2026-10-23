@@ -1,5 +1,6 @@
 from __future__ import annotations
 from collections.abc import Callable, Mapping
+from typing import Literal
 from typing import Any
 import numpy as np
 from numpy.typing import NDArray
@@ -443,11 +444,7 @@ class SpectralTorqueRecoilHeating:
                                      return_angular: bool = p.DEFAULT_RETURN_ANGULAR, 
                                      incident_spectrum: Spectrum | None = p.DEFAULT_INCIDENT_SPECTRUM,
                                      return_scattering_rate: bool = False) -> Any:
-        spectrum, directions_out, domega_out, outgoing, scatter, _ = cls._scattering_data(interaction, field_generator,
-                                                                                           incident_parameters, torque_axis,
-                                                                                           radius_wavelengths, n_theta, n_phi, input_grid,
-                                                                                           input_span_wavelengths, chunk_size,
-                                                                                           incident_spectrum=incident_spectrum)
+        spectrum, directions_out, domega_out, outgoing, scatter, _ = cls._scattering_data(interaction, field_generator, incident_parameters, torque_axis, radius_wavelengths, n_theta, n_phi, input_grid, input_span_wavelengths, chunk_size, incident_spectrum=incident_spectrum)
 
         spin_transfer = cls._spin_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
         orbital_transfer = cls._orbital_transfer_amplitude(spectrum, outgoing, directions_out, scatter, torque_axis)
@@ -468,3 +465,134 @@ class SpectralTorqueRecoilHeating:
         angular = {"directions": directions_out, "domega": domega_out, "spin": spin_density, "orbital": orbital_density, 
                    "correlation": correlated_density, "total": spin_density + orbital_density + correlated_density}
         return (components, angular, gamma_sc) if return_scattering_rate else (components, angular)
+
+class TorqueRecoilHeating:
+    def __init__(self, torque_axis: Literal["x", "y", "z"], N_theta: int = p.SPECTRAL_N_THETA, N_phi: int = p.SPECTRAL_N_PHI):
+        self.torque_axis = torque_axis
+        self.N_theta = N_theta
+        self.N_phi = N_phi
+        self.k_nm = 2 * np.pi / p.WAVELENGTH_NM
+        self.radius_m = p.RADIUS_WAVELENGTHS * p.WAVELENGTH_NM * 1e-9
+        self.omega = 2 * np.pi * c / (p.WAVELENGTH_NM * 1e-9)
+        self.field_to_rate = epsilon_0 * c * self.radius_m**2 / (2 * hbar * self.omega)
+        self.theta = np.linspace(0, np.pi, N_theta, endpoint=False) + np.pi / (2 * N_theta)
+        self.phi = np.linspace(0, 2 * np.pi, N_phi, endpoint=False)
+        self.Theta, self.Phi = np.meshgrid(self.theta, self.phi, indexing="ij")
+        self.axis_index = "xyz".index(torque_axis)
+        basis = np.eye(3)[[(self.axis_index + 1) % 3, (self.axis_index + 2) % 3, self.axis_index]]
+        self.directions = self._propagation_vector(self.Theta, self.Phi) @ basis
+        self.observation_offsets_nm = self.radius_m * 1e9 * self.directions.reshape(-1, 3)
+        self.delta_phi = self.phi[1] - self.phi[0]
+        self.domega = np.sin(self.Theta) * (np.pi / N_theta) * self.delta_phi
+
+    ####################
+    # OPERATORS
+    ####################
+
+    def _projection_axis(self):
+        """Torque axis of interest ê_µ."""
+        if self.torque_axis == "x":
+            return np.array([1.0, 0.0, 0.0])
+        elif self.torque_axis == "y":
+            return np.array([0.0, 1.0, 0.0])
+        elif self.torque_axis == "z":
+            return np.array([0.0, 0.0, 1.0])
+
+    @staticmethod
+    def _propagation_vector(Theta, Phi):
+        return np.stack((np.sin(Theta) * np.cos(Phi), np.sin(Theta) * np.sin(Phi), np.cos(Theta)), axis=-1)
+
+    def _angular_derivative(self, field):
+        """Azimuthal derivative on the grid oriented around the torque axis."""
+        partial_phi_mu_field = (np.roll(field, -1, axis=1) - np.roll(field, 1, axis=1)) / (2 * self.delta_phi)
+        return partial_phi_mu_field
+
+    def _angular_momentum_operators(self, field, *, positions_nm=None, derivatives=None, derivative_curl=None):
+        axis_vector = self._projection_axis()
+        if positions_nm is not None:
+            rotation = np.cross(axis_vector, positions_nm - np.mean(positions_nm, axis=0))
+            orbital_derivative = sum(rotation[:, j, None] * derivatives[j] for j in range(3))
+            J_hat = -1j * hbar * orbital_derivative + 1j * hbar * np.cross(axis_vector, field)
+            S_hat_prime = -1j * hbar * derivative_curl / self.k_nm**2
+        else:
+            S_hat_prime = 1j * hbar * self.directions[..., self.axis_index, None] * np.cross(self.directions, field)
+            J_hat = -1j * hbar * self._angular_derivative(field) + 1j * hbar * np.cross(axis_vector, field)
+            J_hat -= self.directions * np.sum(self.directions * J_hat, axis=-1, keepdims=True)
+        L_hat_prime = J_hat - S_hat_prime
+        return S_hat_prime, L_hat_prime
+
+    #####################
+    # FIELDS
+    #####################
+
+    def _run_simulation(self, particle, in_efield):
+        interaction = LightMatterInteraction(particle, p.WAVELENGTH_NM, p.ENVIRONMENT)
+        interaction.internal_field(in_efield)
+        center_nm = np.mean(particle["geometry_nm"], axis=0)
+        positions_nm = center_nm + self.observation_offsets_nm
+        
+        field = np.empty((len(positions_nm), 3), dtype=complex)
+        for start in range(0, len(positions_nm), p.CHUNK_SIZE):
+            stop = min(start + p.CHUNK_SIZE, len(positions_nm))
+            field[start:stop] = interaction.far_field(positions_nm[start:stop], field="E")
+
+        return field.reshape(self.N_theta, self.N_phi, 3)
+
+    def small_incident_perturbation(self, particle, field_generator, parameters):
+        positions_nm = np.asarray(particle["geometry_nm"], dtype=float)
+
+        def incident_at(points_nm):
+            return evaluate_incident_field(field_generator=field_generator, positions_nm=points_nm, field="E", **parameters)
+
+        in_field = incident_at(positions_nm)
+        step_nm = p.WAVELENGTH_NM * 1e-3
+        cartesian_axes = np.eye(3)
+        derivatives = []
+        for direction in cartesian_axes:
+            field_plus = incident_at(positions_nm + step_nm * direction)
+            field_minus = incident_at(positions_nm - step_nm * direction)
+            derivatives.append((field_plus - field_minus) / (2 * step_nm))
+
+        mixed_derivatives = []
+        axis_vector = self._projection_axis()
+        for direction in cartesian_axes:
+            field_pp = incident_at(positions_nm + step_nm * (axis_vector + direction))
+            field_pm = incident_at(positions_nm + step_nm * (axis_vector - direction))
+            field_mp = incident_at(positions_nm + step_nm * (-axis_vector + direction))
+            field_mm = incident_at(positions_nm - step_nm * (axis_vector + direction))
+            mixed_derivatives.append((field_pp - field_pm - field_mp + field_mm) / (4 * step_nm**2))
+        derivative_curl = np.stack((mixed_derivatives[1][:, 2] - mixed_derivatives[2][:, 1],
+                                    mixed_derivatives[2][:, 0] - mixed_derivatives[0][:, 2],
+                                    mixed_derivatives[0][:, 1] - mixed_derivatives[1][:, 0]), axis=-1)
+        return in_field, positions_nm, derivatives, derivative_curl
+
+    #######################
+    # TORQUE RECOIL HEATING
+    #######################
+
+    def _transfer_vector(self, O_sc_efield, trans_O_in_efield):
+        q_j = O_sc_efield - trans_O_in_efield
+        return q_j
+    
+    def _torque_recoil_heating(self, particle, field_generator, parameters):
+        in_field, positions_nm, derivatives, derivative_curl = self.small_incident_perturbation(particle, field_generator,          parameters)
+        S_in_field, L_in_field = self._angular_momentum_operators(in_field, positions_nm=positions_nm, derivatives=derivatives, derivative_curl=derivative_curl)
+
+        trans_S_in_field = self._run_simulation(particle, S_in_field)
+        trans_L_in_field = self._run_simulation(particle, L_in_field)
+        sc_field = self._run_simulation(particle, in_field)
+        S_sc_field, L_sc_field = self._angular_momentum_operators(sc_field)
+
+        q_S_vec = self._transfer_vector(S_sc_field, trans_S_in_field)
+        q_L_vec = self._transfer_vector(L_sc_field, trans_L_in_field)
+        q_S = self.field_to_rate * np.sum(np.sum(np.abs(q_S_vec)**2, axis=-1) * self.domega) / (2 * np.pi)
+        q_L = self.field_to_rate * np.sum(np.sum(np.abs(q_L_vec)**2, axis=-1) * self.domega) / (2 * np.pi)
+        q_LS = self.field_to_rate * np.sum(np.sum(np.conj(q_S_vec) * q_L_vec, axis=-1).real * self.domega) / np.pi
+        S_tau_tau = q_S + q_L + q_LS
+
+        Gamma_sc = self.field_to_rate * np.sum(np.sum(np.abs(sc_field)**2, axis=-1) * self.domega)
+        S_tau_tau_photon = S_tau_tau / Gamma_sc
+
+        return S_tau_tau, q_S, q_L, q_LS, S_tau_tau_photon, Gamma_sc
+
+    

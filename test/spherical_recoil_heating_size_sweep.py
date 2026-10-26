@@ -1,6 +1,6 @@
 """Calculate spherical-particle recoil heating for four beams about Y and Z.
 
-Derivative and spectral methods use the full beam fields.
+Derivative and angular-momentum-transfer methods use the full beam fields.
 Every beam propagates along +Z. Run as a 44-task SLURM array (IDs 0-43);
 the last completed task automatically combines the Y and Z CSV files.
 """
@@ -13,8 +13,10 @@ import os
 from pathlib import Path
 from time import perf_counter
 import numpy as np
-from scipy.constants import c, epsilon_0, hbar
+from scipy.constants import c, epsilon_0
 import optomechanics_levitation as oml
+from optomechanics_levitation.light_matter_interaction import LightMatterInteraction
+from optomechanics_levitation.recoil_heating import TorqueRecoilHeating
 
 
 MESH_DIVISIONS = 22.0  # About 5,500 sphere dipoles, comparable to the original AR=2 mesh
@@ -26,6 +28,8 @@ FOCUSED_SPECTRUM_SPAN_WAVELENGTHS = 16.0
 OUTPUT_ROOT = Path(__file__).resolve().parents[1] / "outputs"
 OUTPUT_DIR = OUTPUT_ROOT / "recoil_heating_results" / "sphere"
 AXIS_BEAMS = {"y": BEAM_NAMES, "z": BEAM_NAMES}
+# Keep the existing spectral_* column names for the CSV comparison files.
+# Their values now come from TorqueRecoilHeating.
 RESULT_COLUMNS = (
     "long_axis_nm", "beam", "direction_x", "direction_y", "direction_z",
     "incident_amplitude_v_per_m", "numerical_source", "D",
@@ -35,6 +39,25 @@ RESULT_COLUMNS = (
     "derivative_recoil_heating_per_photon", "spectral_recoil_heating_per_photon",
 )
 OLD_RESULT_COLUMNS = RESULT_COLUMNS[:-4]
+METHOD_SOURCE = "angular_momentum_transfer"
+
+
+class ReusableTorqueRecoilHeating(TorqueRecoilHeating):
+    """Reuse the particle's interaction matrix across beams and torque axes."""
+
+    def __init__(self, torque_axis: str, interaction: LightMatterInteraction) -> None:
+        super().__init__(torque_axis)
+        self.interaction = interaction
+
+    def _run_simulation(self, particle: dict, in_efield: np.ndarray) -> np.ndarray:
+        self.interaction.internal_field(in_efield)
+        center_nm = np.mean(particle["geometry_nm"], axis=0)
+        positions_nm = center_nm + self.observation_offsets_nm
+        field = np.empty((len(positions_nm), 3), dtype=complex)
+        for start in range(0, len(positions_nm), oml.parameters.CHUNK_SIZE):
+            stop = min(start + oml.parameters.CHUNK_SIZE, len(positions_nm))
+            field[start:stop] = self.interaction.far_field(positions_nm[start:stop], field="E")
+        return field.reshape(self.N_theta, self.N_phi, 3)
 
 
 def rayleigh_limit_nm() -> float:
@@ -65,21 +88,12 @@ class SizeSweep:
         )
         self.center_nm = np.mean(self.particle["geometry_nm"], axis=0)
         self.electric_amplitude = np.sqrt(2 * oml.parameters.INTENSITY_W_PER_M2 / (epsilon_0 * c))
-        self.spectral = {}
+        self.interaction = LightMatterInteraction(self.particle, oml.parameters.WAVELENGTH_NM, oml.parameters.ENVIRONMENT)
+        self.torque_models = {axis: ReusableTorqueRecoilHeating(axis, self.interaction) for axis in AXIS_BEAMS}
         self.output_paths = {
             axis: OUTPUT_DIR / f"beamwise_recoilheating_{axis}_{long_axis_nm:.6f}nm.csv"
             for axis in AXIS_BEAMS
         }
-
-    def _spectral_model(self, axis: str) -> oml.SpectralTorqueRecoilHeating:
-        if axis not in self.spectral:
-            self.spectral[axis] = oml.SpectralTorqueRecoilHeating(
-                self.particle, wavelength_nm=oml.parameters.WAVELENGTH_NM,
-                environment=oml.parameters.ENVIRONMENT, torque_axis=axis,
-                n_theta=oml.parameters.SPECTRAL_N_THETA, n_phi=oml.parameters.SPECTRAL_N_PHI,
-                radius_wavelengths=oml.parameters.FAR_FIELD_RADIUS_NM / oml.parameters.WAVELENGTH_NM,
-            )
-        return self.spectral[axis]
 
     @staticmethod
     def _focused_options() -> dict:
@@ -125,9 +139,9 @@ class SizeSweep:
         return float(self.electric_amplitude / reference_norm)
 
     def _calculate_beam(self, name: str, axes: tuple[str, ...]) -> dict[str, dict]:
-        """Share one derivative solve and incident spectrum across requested axes."""
+        """Calculate derivative and angular-momentum-transfer results."""
         started = perf_counter()
-        beam, input_grid, input_span = self._beam(name)
+        beam, _, _ = self._beam(name)
         field = self._local_field(beam)
         amplitude = self._incident_amplitude(name, beam)
         print(f"[{name}] derivative, axes={axes}", flush=True)
@@ -135,36 +149,28 @@ class SizeSweep:
             self.particle, wavelength_nm=oml.parameters.WAVELENGTH_NM,
             environment=oml.parameters.ENVIRONMENT, rotation_axes=axes,
         ).compute(field, amplitude_v_per_m=amplitude)
-        sample_axis = axes[0]
-        print(f"[{name}] incident spectrum ({input_grid} x {input_grid})", flush=True)
-        base_spectrum = self._spectral_model(sample_axis).incident_angular_spectrum(
-            field, amplitude_v_per_m=amplitude, center_nm=self.center_nm,
-            input_grid=input_grid, input_span_wavelengths=input_span,
-        )
+        parameters = {"wavelength_nm": oml.parameters.WAVELENGTH_NM,
+                      "environment": oml.parameters.ENVIRONMENT, "amplitude_v_per_m": amplitude}
         rows = {}
         for axis in axes:
-            spectrum = (base_spectrum if axis == sample_axis else
-                        oml.SpectralTorqueRecoilHeating.rotate_incident_spectrum(
-                            base_spectrum, np.eye(3), self.center_nm, axis))
-            print(f"[{name}, {axis}] spectral", flush=True)
-            spectral = self._spectral_model(axis).compute(
-                field, amplitude_v_per_m=amplitude, incident_spectrum=spectrum,
-            )
+            print(f"[{name}, {axis}] angular-momentum transfer", flush=True)
+            total, spin, orbital, correlation, per_photon, gamma_sc = self.torque_models[axis]._torque_recoil_heating(
+                self.particle, field, parameters)
             rows[axis] = dict(
                 long_axis_nm=self.long_axis_nm, beam=name,
                 direction_x=INCIDENT_DIRECTION[0], direction_y=INCIDENT_DIRECTION[1],
                 direction_z=INCIDENT_DIRECTION[2], incident_amplitude_v_per_m=amplitude,
-                numerical_source="computed", D=derivative["D"][axis],
+                numerical_source=METHOD_SOURCE, D=derivative["D"][axis],
                 derivative_total_torque=derivative["total_torque"][axis],
-                spectral_total_torque=spectral["total_torque"],
-                spin_term=spectral["spin_term"], orbital_term=spectral["orbital_term"],
-                correlation_term=spectral["correlation_term"],
-                derivative_gamma_sc=derivative["Gamma_sc"], spectral_gamma_sc=spectral["Gamma_sc"],
+                spectral_total_torque=total,
+                spin_term=spin, orbital_term=orbital,
+                correlation_term=correlation,
+                derivative_gamma_sc=derivative["Gamma_sc"], spectral_gamma_sc=gamma_sc,
                 derivative_recoil_heating_per_photon=derivative["total_torque"][axis] / derivative["Gamma_sc"],
-                spectral_recoil_heating_per_photon=spectral["total_torque"] / spectral["Gamma_sc"],
+                spectral_recoil_heating_per_photon=per_photon,
             )
             print(f"[{name}, {axis}] derivative={rows[axis]['derivative_total_torque']:.6e}, "
-                  f"spectral={rows[axis]['spectral_total_torque']:.6e}", flush=True)
+                  f"angular-momentum transfer={total:.6e}", flush=True)
         print(f"[{name}] complete in {(perf_counter() - started) / 60:.1f} min", flush=True)
         return rows
 
@@ -181,35 +187,15 @@ class SizeSweep:
                 for row in reader:
                     if round(float(row["long_axis_nm"]), 6) != round(self.long_axis_nm, 6):
                         continue
+                    if (row["numerical_source"] != METHOD_SOURCE or
+                            any(not row.get(column) for column in RESULT_COLUMNS)):
+                        continue
                     if row["beam"] not in AXIS_BEAMS[axis]:
                         raise ValueError(f"Invalid beam in {source}: {row['beam']}")
                     if row["beam"] in rows and source == path:
                         raise ValueError(f"Duplicate beam in {path}: {row['beam']}")
                     rows.setdefault(row["beam"], row)
         return rows
-
-    def _add_scattering_rates(self, name: str, axes: tuple[str, ...], rows: dict[str, dict[str, dict]]) -> None:
-        """Complete stored torques without repeating the derivative or torque calculations."""
-        beam, input_grid, input_span = self._beam(name)
-        field = self._local_field(beam)
-        amplitude = float(rows[axes[0]][name]["incident_amplitude_v_per_m"])
-        spectrum = self._spectral_model(axes[0]).incident_angular_spectrum(
-            field, amplitude_v_per_m=amplitude, center_nm=self.center_nm,
-            input_grid=input_grid, input_span_wavelengths=input_span)
-        for axis in axes:
-            row = rows[axis][name]
-            axis_spectrum = (spectrum if axis == axes[0] else
-                             oml.SpectralTorqueRecoilHeating.rotate_incident_spectrum(
-                                 spectrum, np.eye(3), self.center_nm, axis))
-            derivative_gamma = (2 * np.pi * float(row["derivative_total_torque"])
-                                / (hbar**2 * float(row["D"])))
-            spectral_gamma = self._spectral_model(axis).scattering_rate(
-                field, amplitude_v_per_m=float(row["incident_amplitude_v_per_m"]),
-                incident_spectrum=axis_spectrum)
-            row.update(derivative_gamma_sc=derivative_gamma, spectral_gamma_sc=spectral_gamma,
-                       derivative_recoil_heating_per_photon=float(row["derivative_total_torque"]) / derivative_gamma,
-                       spectral_recoil_heating_per_photon=float(row["spectral_total_torque"]) / spectral_gamma)
-            self._save_rows(axis, rows[axis])
 
     def _save_rows(self, axis: str, rows: dict[str, dict]) -> None:
         path = self.output_paths[axis]
@@ -236,10 +222,6 @@ class SizeSweep:
         for name in BEAM_NAMES:
             missing_axes = tuple(axis for axis in AXIS_BEAMS
                                  if name in AXIS_BEAMS[axis] and name not in rows[axis])
-            saved_axes = tuple(axis for axis in AXIS_BEAMS if name in rows[axis] and
-                               not rows[axis][name].get("spectral_gamma_sc"))
-            if saved_axes:
-                self._add_scattering_rates(name, saved_axes, rows)
             if missing_axes:
                 calculated = self._calculate_beam(name, missing_axes)
                 for axis in missing_axes:
@@ -276,6 +258,8 @@ def _combined_rows(axis: str) -> list[dict[str, str]]:
         for row in rows:
             if not all(row[column] for column in RESULT_COLUMNS):
                 raise ValueError(f"Missing result in {path}, {row['beam']}")
+            if row["numerical_source"] != METHOD_SOURCE:
+                raise ValueError(f"Old recoil method in {path}, {row['beam']}")
             numeric_columns = (column for column in RESULT_COLUMNS
                                if column not in ("beam", "numerical_source"))
             if not all(math.isfinite(float(row[column])) for column in numeric_columns):
@@ -289,7 +273,7 @@ def _combined_rows(axis: str) -> list[dict[str, str]]:
 
 
 def combine() -> tuple[Path, Path]:
-    """Write the complete Y and Z CSVs with derivative and spectral results."""
+    """Write the complete Y and Z CSVs with derivative and operator results."""
     y_rows = _combined_rows("y")
     z_rows = _combined_rows("z")
     y_path = OUTPUT_ROOT / "recoil_heating_yaxis_sphere.csv"
@@ -318,11 +302,12 @@ def combine_if_complete() -> None:
                 with path.open(newline="") as file:
                     reader = csv.DictReader(file)
                     if tuple(reader.fieldnames or ()) != RESULT_COLUMNS:
-                        raise ValueError(f"Unexpected columns in {path}")
+                        return
                     rows = list(reader)
                 if (len(rows) != len(BEAM_NAMES) or
                         {row["beam"] for row in rows} != set(BEAM_NAMES) or
-                        any(not all(row[column] for column in RESULT_COLUMNS) for row in rows)):
+                        any(row["numerical_source"] != METHOD_SOURCE or
+                            not all(row[column] for column in RESULT_COLUMNS) for row in rows)):
                     return
         for path in combine():
             print(path, flush=True)

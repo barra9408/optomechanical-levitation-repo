@@ -1,0 +1,17 @@
+Running SLURM prolog script on ruby069
+===============================================================================
+Job started on Mon Oct 26 21:06:04 GMT 2026
+Job ID          : 1992865
+Job name        : recoil_info_patterns
+WorkDir         : /iridisfs/home/sgb1u26/optomechanics-levitation
+Command         : /iridisfs/home/sgb1u26/optomechanics-levitation/requests/recoil_heating_angular_scan.sh
+Partition       : amd
+Num hosts       : 1
+Num cores       : 4
+Num of tasks    : 1
+Hosts allocated : ruby069
+Job Output Follows ...
+===============================================================================
+[laguerre-gauss-02, 877 nm] torque=z, AR=4, scattered grid=64 x 128, checkpoint=0/8192
+[laguerre-gauss-02, 877 nm] 8192/8192 directions in 0.1 min
+[laguerre-gauss-02, 877 nm] Complete: /iridisfs/home/sgb1u26/optomechanics-levitation/outputs/laguerre_gauss_02_info_patterns_877nm_ar4.csv

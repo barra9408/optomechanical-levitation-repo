@@ -19,7 +19,7 @@ $$
 The incident Laguerre-Gauss (LG) modes follow when the longitudinal second
 derivative is negligible. The corresponding paraxial equation is
 $\nabla_\perp^2u+2ik\,\partial_z u=0$. Focusing is treated separately with
-the vector Richards--Wolf integral below; the paraxial equation is not used to
+the vector Richards-Wolf integral below; the paraxial equation is not used to
 propagate the field through the objective.
 
 ## Plane wave
@@ -27,10 +27,7 @@ propagate the field through the objective.
 For a plane wave incident along $+z$, $u_{\mathrm{PW}}=1$ and
 
 $$
-\mathbf E_{\mathrm{PW}}(\mathbf r)
-=E_{\mathrm{PW}}e^{ikz}\hat{\mathbf e},
-\qquad \hat{\mathbf e}^{*}\!\cdot\hat{\mathbf e}=1,
-\qquad \hat{\mathbf e}\cdot\hat{\mathbf z}=0.
+\mathbf E_{\mathrm{PW}}(\mathbf r) =E_{\mathrm{PW}}e^{ikz}\hat{\mathbf e}, \qquad \hat{\mathbf e}^{*} \cdot\hat{\mathbf e}=1, \qquad \hat{\mathbf e}\cdot\hat{\mathbf z}=0.
 $$
 
 This is an exact homogeneous-medium solution of Helmholtz's equation. Its power
@@ -82,15 +79,14 @@ Superpositions of these modes, with a Gaussian transverse distribution at the
 waist, produce the LG family. The implementation evaluates its closed form:
 
 $$
-\begin{aligned}
+\begin{equation}
 u_{p,\ell}(\rho,\phi,z)
 ={}&\frac{C_{p,\ell}}{w(z)}
 \left(\frac{\sqrt{2}\rho}{w(z)}\right)^{|\ell|}
 L_p^{|\ell|}\!\left(\frac{2\rho^2}{w^2(z)}\right)
-\exp\!\left[-\frac{\rho^2}{w^2(z)}\right]\\
-&\times\exp\!\left[i\ell\phi
+\exp\!\left[-\frac{\rho^2}{w^2(z)}\right] \times\exp\!\left[i\ell\phi
 +i\frac{k\rho^2}{2R(z)}-i\psi_{p,\ell}(z)\right],
-\end{aligned}
+\end{equation}
 $$
 
 where $p=0,1,\ldots$ is the radial index, $\ell\in\mathbb Z$ is the
@@ -108,7 +104,7 @@ $$
 
 At the entrance pupil, $z=0$, so $w=w_0$ and both the curvature and Gouy
 phases vanish. The mode is normalized by
-$\int_0^{2\pi}\!d\phi\int_0^\infty\!\rho\,d\rho\,|u_{p,\ell}|^2=1$.
+$\int_0^{2\pi}d\phi\int_0^\infty \rho\,d\rho\,|u_{p,\ell}|^2=1$.
 Thus $p=\ell=0$ gives the Gaussian mode, while $(p,\ell)=(0,1)$ and $(0,2)$
 give the first two helical modes used in the cases. The azimuthal phase
 $e^{i\ell\phi}$ carries the sign convention set by $e^{ikz-i\omega t}$.
@@ -169,7 +165,7 @@ electric field on the entrance pupil, the field near the geometric focus is
 $$
 \mathbf E_{\mathrm{foc}}(\mathbf r)=
 -\frac{ikf}{2\pi}
-\int_0^{\theta_{\max}}\!\int_0^{2\pi}
+\int_0^{\theta_{\max}}\int_0^{2\pi}
 \sqrt{\cos\theta}\,\mathsf R(\theta,\phi)
 \mathbf E_{\mathrm{pupil}}(f\sin\theta,\phi)
 e^{ik\hat{\mathbf s}(\theta,\phi)\cdot\mathbf r}
@@ -186,7 +182,7 @@ $$
 \begin{gathered}
 dA=\rho\,d\rho\,d\phi
 =f^2\sin\theta\cos\theta\,d\theta\,d\phi,\\
-\mathcal N_A=\int_{\mathrm{pupil}}\!|\mathbf F|^2dA,
+\mathcal N_A=\int_{\mathrm{pupil}} |\mathbf F|^2dA,
 \qquad
 \mathbf E_{\mathrm{pupil}}
 =\sqrt{\frac{2P_{\mathrm{pupil}}}{n\epsilon_0c\,\mathcal N_A}}\,\mathbf F.

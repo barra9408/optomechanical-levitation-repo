@@ -79,14 +79,15 @@ Superpositions of these modes, with a Gaussian transverse distribution at the
 waist, produce the LG family. The implementation evaluates its closed form:
 
 $$
-\begin{equation}
+\begin{aligned}
 u_{p,\ell}(\rho,\phi,z)
-={}&\frac{C_{p,\ell}}{w(z)}
+&={}&\frac{C_{p,\ell}}{w(z)}
 \left(\frac{\sqrt{2}\rho}{w(z)}\right)^{|\ell|}
 L_p^{|\ell|}\!\left(\frac{2\rho^2}{w^2(z)}\right)
-\exp\!\left[-\frac{\rho^2}{w^2(z)}\right] \times\exp\!\left[i\ell\phi
+\exp\!\left[-\frac{\rho^2}{w^2(z)}\right] \\
+\times\exp\!\left[i\ell\phi
 +i\frac{k\rho^2}{2R(z)}-i\psi_{p,\ell}(z)\right],
-\end{equation}
+\end{aligned}
 $$
 
 where $p=0,1,\ldots$ is the radial index, $\ell\in\mathbb Z$ is the

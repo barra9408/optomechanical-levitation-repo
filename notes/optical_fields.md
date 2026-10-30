@@ -1,7 +1,7 @@
 # Optical fields
 
 We describe the incident light by a complex electric-field amplitude with time
-dependence $\mathbf E(\mathbf r,t)=\operatorname{Re}[\mathbf E(\mathbf r)e^{-i\omega t}]$.
+dependence $\mathbf E(\mathbf r,t)=\mathrm{Re}[\mathbf E(\mathbf r)e^{-i\omega t}]$.
 In a homogeneous, lossless, nonmagnetic medium, $k=n\omega/c=2\pi n/\lambda$.
 All spatial arguments supplied to the simulator are in nanometres, whereas
 electric fields and optical powers are returned or specified in $\mathrm{V/m}$

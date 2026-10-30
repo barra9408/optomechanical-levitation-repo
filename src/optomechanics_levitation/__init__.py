@@ -3,8 +3,7 @@ from .incident_field import input_beam_waist_from_filling_factor, electric_field
 from .light_matter_interaction import LightMatterInteraction, evaluate_internal_field, evaluate_near_field, evaluate_far_field, total_fields
 from .observables import maxwell_stress_tensor, spherical_integration_surface, evaluate_force, evaluate_torque, derivative_torque_spectral_density, force_spectral_density, torque_spectral_density
 from .recoil_heating import TheoreticalTorqueRecoilHeating, DerivativeTorqueRecoilHeating, TorqueRecoilHeating
-from .optical_fields.hermitegauss00 import HermiteGauss00
-from .optical_fields.laguerregaus import LaguerreGauss01, LaguerreGauss02
+from .optical_fields.laguerregauss import LaguerreGauss
 from .optical_fields.planewave import PlaneWave
 from . import parameters
 
@@ -30,9 +29,7 @@ __all__ = [
     "TheoreticalTorqueRecoilHeating",
     "DerivativeTorqueRecoilHeating",
     "TorqueRecoilHeating",
-    "HermiteGauss00",
-    "LaguerreGauss01",
-    "LaguerreGauss02",
+    "LaguerreGauss",
     "PlaneWave",
     "parameters",
 ]

@@ -1,3 +1,0 @@
-# Observables
-
-## Torque recoil heating

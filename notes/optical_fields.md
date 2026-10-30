@@ -16,7 +16,7 @@ $$
 \nabla_\perp^2u+2ik\,\partial_z u+\partial_z^2u=0.
 $$
 
-The incident Laguerre--Gauss (LG) modes follow when the longitudinal second
+The incident Laguerre-Gauss (LG) modes follow when the longitudinal second
 derivative is negligible. The corresponding paraxial equation is
 $\nabla_\perp^2u+2ik\,\partial_z u=0$. Focusing is treated separately with
 the vector Richards--Wolf integral below; the paraxial equation is not used to

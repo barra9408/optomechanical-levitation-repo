@@ -1,7 +1,7 @@
 # Transfer amplitudes
 
 The simulator describes monochromatic scattering by a linear map
-$\mathcal M_0$ from the incident electric field at the particle cells to the
+$`\mathcal M_0`$ from the incident electric field at the particle cells to the
 scattered electric field on a far-field sphere. For a fixed particle, wavelength,
 and environment,
 
@@ -12,21 +12,21 @@ $$
 \mathcal M_0=\mathbf G_{\mathrm{ff}}\boldsymbol{\alpha}A^{-1}.
 $$
 
-Here $A$ is the coupled-dipole interaction matrix, $\boldsymbol{\alpha}$ contains
-the cell polarizabilities, and $\mathbf G_{\mathrm{ff}}$ propagates the induced
+Here $`A`$ is the coupled-dipole interaction matrix, $`\boldsymbol{\alpha}`$ contains
+the cell polarizabilities, and $`\mathbf G_{\mathrm{ff}}`$ propagates the induced
 polarizations to the observation sphere. The code applies this map by solving
 for the internal field and evaluating the far field. It does not assemble
-$\mathcal M_0$ as a dense matrix. The factorization of $A$ is reused when a
+$`\mathcal M_0`$ as a dense matrix. The factorization of $`A`$ is reused when a
 second incident field is sent through the same particle.
 
 ## From the scattering map to a transfer amplitude
 
-Let $\hat O$ be a linear operator associated with a quantity carried by the
+Let $`\hat O`$ be a linear operator associated with a quantity carried by the
 optical field. The incident field and the scattered field have different
 numerical representations: the former is sampled at dipole positions
-$\mathbf r_i$, while the latter is sampled at outgoing directions
-$\hat{\mathbf n}$. We therefore write $\hat O_{\mathrm{in}}$ and
-$\hat O_{\mathrm{out}}$ for the action of the same quantity on these two
+$`\mathbf r_i`$, while the latter is sampled at outgoing directions
+$`\hat{\mathbf n}`$. We therefore write $`\hat O_{\mathrm{in}}`$ and
+$`\hat O_{\mathrm{out}}`$ for the action of the same quantity on these two
 representations. Its transfer amplitude is
 
 $$
@@ -37,8 +37,8 @@ $$
 \right](\hat{\mathbf n}).
 $$
 
-This is the meaning of $[\mathcal M_0,\hat O]\mathbf E_{\mathrm{in}}$ when
-$\mathcal M_0$ maps between two field spaces. The order fixes the convention:
+This is the meaning of $`[\mathcal M_0,\hat O]\mathbf E_{\mathrm{in}}`$ when
+$`\mathcal M_0`$ maps between two field spaces. The order fixes the convention:
 the operator acts on the incident field before scattering in the first term,
 and on the scattered field after scattering in the second. Both terms are
 complex vector fields on the **same outgoing grid** and can be subtracted
@@ -46,8 +46,8 @@ direction by direction. Their phase must be retained when comparing or
 combining operators.
 
 For angular momentum, the paper derives this expression from a rotation of
-the particle. If $\hat O_{J,\mu}$ generates rotations about
-$\hat{\mathbf e}_{\mu}$, then
+the particle. If $`\hat O_{J,\mu}`$ generates rotations about
+$`\hat{\mathbf e}_{\mu}`$, then
 
 $$
 \mathcal M_{\delta_\mu}
@@ -76,16 +76,16 @@ observable.
 The incident beam does not need one propagation direction. In particular,
 a focused beam contains a continuum of directions. In the supplied cases,
 the Richards-Wolf integral combines these directions into a callable
-$\mathbf E_{\mathrm{in}}(\mathbf r)$. The simulator evaluates that field at
+$`\mathbf E_{\mathrm{in}}(\mathbf r)`$. The simulator evaluates that field at
 the required positions; an operator that needs spatial derivatives can request
-it at nearby positions. The outgoing directions specify where $\mathcal M_0$
-is evaluated and how $\hat O_{\mathrm{out}}$ acts. No single incident direction
+it at nearby positions. The outgoing directions specify where $`\mathcal M_0`$
+is evaluated and how $`\hat O_{\mathrm{out}}`$ acts. No single incident direction
 is assigned to the complete beam.
 
 ## Numerical evaluation and simulator interface
 
-For a requested axis $\mu$, `TransferAmplitudes` places a midpoint grid on a
-sphere with its polar axis along $\hat{\mathbf e}_\mu$:
+For a requested axis $`\mu`$, `TransferAmplitudes` places a midpoint grid on a
+sphere with its polar axis along $`\hat{\mathbf e}_\mu`$:
 
 $$
 \theta_a=\left(a+\tfrac12\right)\frac{\pi}{N_\theta},\qquad
@@ -93,12 +93,12 @@ $$
 w_{ab}=\sin\theta_a\frac{\pi}{N_\theta}\frac{2\pi}{N_\phi}.
 $$
 
-The observation points are $\mathbf r_0+R\hat{\mathbf n}_{ab}$, where
-$\mathbf r_0$ is the mean particle position and $R$ is
+The observation points are $`\mathbf r_0+R\hat{\mathbf n}_{ab}`$, where
+$`\mathbf r_0`$ is the mean particle position and $`R`$ is
 `far_field_distance_nm`. The calculation first obtains
-$\mathcal M_0\mathbf E_{\mathrm{in}}$. It then evaluates
-$\hat O_{\mathrm{in}}\mathbf E_{\mathrm{in}}$ at the dipoles, sends that field
-through the *same* scattering interaction, applies $\hat O_{\mathrm{out}}$ to
+$`\mathcal M_0\mathbf E_{\mathrm{in}}`$. It then evaluates
+$`\hat O_{\mathrm{in}}\mathbf E_{\mathrm{in}}`$ at the dipoles, sends that field
+through the *same* scattering interaction, applies $`\hat O_{\mathrm{out}}`$ to
 the original far field, and subtracts the two results. The returned array has
 shape `(n_theta, n_phi, 3)`. Its entries are amplitudes, not an integrated
 rate.
@@ -130,7 +130,7 @@ weights = calculator.domega
 ```
 
 The operator's `axis` selects the polar axis; if it has no `axis` attribute,
-the grid uses $z$. The angular weights and directions are available after
+the grid uses $`z`$. The angular weights and directions are available after
 `transfer_amplitude` returns. A later call with another axis updates both
 arrays. The case fields are already normalized by `FocusedBeam` to the power
 specified in `parameters.py`; their wrapper uses
@@ -173,12 +173,12 @@ $$
 \sum_{a,b}w_{ab}|\Delta\mathbf q_O(\hat{\mathbf n}_{ab})|^2.
 $$
 
-`TransferAmplitudes` returns $\Delta\mathbf q_O$ and the grid weights needed
-for this integration; it does not calculate $\mathcal Q_O$ or a scattering rate.
-For the angular-momentum operator, $\mathcal Q_J$ is the torque recoil spectral
-density $S_{\tau\tau}^{\mu}$ under the paper's assumptions. The operator acts
-on the electric field with its physical units, including the factor $\hbar$;
-the returned amplitude is not divided by $\hbar$.
+`TransferAmplitudes` returns $`\Delta\mathbf q_O`$ and the grid weights needed
+for this integration; it does not calculate $`\mathcal Q_O`$ or a scattering rate.
+For the angular-momentum operator, $`\mathcal Q_J`$ is the torque recoil spectral
+density $`S_{\tau\tau}^{\mu}`$ under the paper's assumptions. The operator acts
+on the electric field with its physical units, including the factor $`\hbar`$;
+the returned amplitude is not divided by $`\hbar`$.
 
 ```python
 import numpy as np
@@ -202,8 +202,8 @@ on both sides of the scattering map.
 
 ### Total angular momentum
 
-The origin for rotations is the particle centre $\mathbf r_0$. In position
-space, the component about axis $\mu$ acts on a vector field as
+The origin for rotations is the particle centre $`\mathbf r_0`$. In position
+space, the component about axis $`\mu`$ acts on a vector field as
 
 $$
 \hat O_{J,\mu}^{\mathrm{in}}\mathbf E
@@ -224,7 +224,7 @@ $$
 
 The transverse projector removes the longitudinal component introduced by
 numerical differentiation. The incident spatial derivatives use centred
-differences with $h=10^{-3}\lambda$; the outgoing azimuthal derivative uses
+differences with $`h=10^{-3}\lambda`$; the outgoing azimuthal derivative uses
 periodic neighbouring grid points. This is the operator that enters the
 rotation-derivative identity above.
 
@@ -254,7 +254,7 @@ $$
 (\hat{\mathbf n}\times\mathbf E_{\mathrm{sc}}).
 $$
 
-Here the current code uses $k=2\pi/\lambda$ with positions and wavelength in
+Here the current code uses $`k=2\pi/\lambda`$ with positions and wavelength in
 nanometres, as in the vacuum environment used by the cases.
 
 ```python
@@ -272,9 +272,8 @@ $$
 \hat O_{L,\mu}=\hat O_{J,\mu}-\hat O_{S,\mu}.
 $$
 
-Linearity of $\mathcal M_0$ then gives the amplitude identity
-$\Delta\mathbf q_{J,\mu}
-=\Delta\mathbf q_{L,\mu}+\Delta\mathbf q_{S,\mu}$.
+Linearity of $`\mathcal M_0`$ then gives the amplitude identity
+$`\Delta\mathbf q_{J,\mu}=\Delta\mathbf q_{L,\mu}+\Delta\mathbf q_{S,\mu}`$.
 The norms do **not** obey the same additive rule, because the two amplitudes
 can interfere:
 
@@ -305,9 +304,9 @@ the **same shape** as the far field, `(n_theta, n_phi, 3)`. Both methods must us
 the same physical units and sign convention. An optional `axis` attribute
 chooses the outgoing polar axis.
 
-For example, the $z$ component of linear momentum is
-$\hat p_z=-i\hbar\partial_z$ in position space and
-$\hat p_z=\hbar k\hat n_z$ for an outgoing plane-wave component. Spatial
+For example, the $`z`$ component of linear momentum is
+$`\hat p_z=-i\hbar\partial_z`$ in position space and
+$`\hat p_z=\hbar k\hat n_z`$ for an outgoing plane-wave component. Spatial
 coordinates enter the interface in nanometres, so the derivative below is
 converted to inverse metres:
 

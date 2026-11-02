@@ -16,7 +16,7 @@ import numpy as np
 from scipy.constants import c, epsilon_0
 import optomechanics_levitation as oml
 from optomechanics_levitation.light_matter_interaction import LightMatterInteraction
-from optomechanics_levitation.recoil_heating import TorqueRecoilHeating
+from test.recoil_heating.recoil_heating import TorqueRecoilHeating
 
 
 MESH_DIVISIONS = 22.0  # About 5,500 sphere dipoles, comparable to the original AR=2 mesh

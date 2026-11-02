@@ -16,7 +16,7 @@ from time import perf_counter
 import numpy as np
 import optomechanics_levitation as oml
 from optomechanics_levitation.light_matter_interaction import LightMatterInteraction
-from optomechanics_levitation.recoil_heating import TorqueRecoilHeating
+from test.recoil_heating.recoil_heating import TorqueRecoilHeating
 
 from recoil_heating_size_sweep import BEAM_NAMES, SizeSweep, long_axis_values_nm
 

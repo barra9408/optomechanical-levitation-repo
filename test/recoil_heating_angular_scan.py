@@ -10,7 +10,7 @@ from scipy.constants import c, epsilon_0, hbar
 
 import optomechanics_levitation as oml
 from optomechanics_levitation.light_matter_interaction import LightMatterInteraction
-from optomechanics_levitation.recoil_heating import TorqueRecoilHeating
+from test.recoil_heating.recoil_heating import TorqueRecoilHeating
 
 
 LONG_AXES_NM = (100.0, 877.0)

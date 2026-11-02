@@ -17,3 +17,32 @@ Job Output Follows ...
 [SIZE 17, r=1, lg_01] Gamma_sc=7.798561e+13
 [SIZE 17, r=1, lg_02] Gamma_sc=4.561029e+12
 [SIZE 17, r=2, plane_wave] Gamma_sc=2.935710e+14
+[SIZE 17, r=2, lg_00] Gamma_sc=1.141633e+14
+[SIZE 17, r=2, lg_01] Gamma_sc=4.304327e+12
+[SIZE 17, r=2, lg_02] Gamma_sc=3.492426e+11
+[SIZE 17, r=4, plane_wave] Gamma_sc=2.210113e+13
+[SIZE 17, r=4, lg_00] Gamma_sc=8.610013e+12
+[SIZE 17, r=4, lg_01] Gamma_sc=2.521919e+11
+[SIZE 17, r=4, lg_02] Gamma_sc=2.474387e+10
+[COMPLETE] /iridisfs/home/sgb1u26/optomechanics-levitation/outputs/recoil_heating_results/transfer_amplitudes/backfill/size_016.csv
+==============================================================================
+Running epilogue script on ruby025.
+
+Submit time  : 2026-11-02T11:43:15
+Start time   : 2026-11-02T11:53:36
+End time     : 2026-11-02T11:55:54
+Elapsed time : 00:02:18 (Timelimit=12:00:00)
+
+Job ID: 2091055
+Array Job ID: 2090921_16
+Cluster: iridis_x
+User/Group: sgb1u26/wf
+State: COMPLETED (exit code 0)
+Nodes: 1
+Cores per node: 16
+CPU Utilized: 00:32:58
+CPU Efficiency: 89.58% of 00:36:48 core-walltime
+Job Wall-clock time: 00:02:18
+Memory Utilized: 2.69 GB
+Memory Efficiency: 4.21% of 64.00 GB (64.00 GB/node)
+

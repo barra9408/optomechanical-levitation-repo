@@ -1,0 +1,34 @@
+Running SLURM prolog script on ruby053.cluster.local
+===============================================================================
+Job started on Mon Nov  2 12:10:45 GMT 2026
+Job ID          : 2090922
+Job name        : recoil-rate-combine
+WorkDir         : /iridisfs/home/sgb1u26/optomechanics-levitation
+Command         : (null)
+Partition       : amd
+Num hosts       : 1
+Num cores       : 1
+Num of tasks    : 1
+Hosts allocated : ruby053
+Job Output Follows ...
+===============================================================================
+[COMPLETE] /iridisfs/home/sgb1u26/optomechanics-levitation/test/recoil_heating/size_sweep.csv
+==============================================================================
+Running epilogue script on ruby053.
+
+Submit time  : 2026-11-02T11:43:15
+Start time   : 2026-11-02T12:10:45
+End time     : 2026-11-02T12:10:51
+Elapsed time : 00:00:06 (Timelimit=00:10:00)
+
+Job ID: 2090922
+Cluster: iridis_x
+User/Group: sgb1u26/wf
+State: COMPLETED (exit code 0)
+Cores: 1
+CPU Utilized: 00:00:02
+CPU Efficiency: 33.33% of 00:00:06 core-walltime
+Job Wall-clock time: 00:00:06
+Memory Utilized: 10.11 MB
+Memory Efficiency: 0.25% of 4.00 GB (4.00 GB/node)
+

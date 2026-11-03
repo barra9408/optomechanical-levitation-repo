@@ -1,8 +1,8 @@
 from .particle import particle_properties, translate_particle, rotate_particle
 from .incident_field import input_beam_waist_from_filling_factor, electric_field_amplitude_from_power, evaluate_incident_field
-from .light_matter_interaction import LightMatterInteraction, evaluate_internal_field, evaluate_near_field, evaluate_far_field, total_fields
-from .operators import maxwell_stress_tensor, spherical_integration_surface, evaluate_force, evaluate_torque, derivative_torque_spectral_density, force_spectral_density, torque_spectral_density
-from ...test.recoil_heating.recoil_heating import TheoreticalTorqueRecoilHeating, DerivativeTorqueRecoilHeating, TorqueRecoilHeating
+from .light_matter_interaction import LightMatterInteraction
+from .operators import angular_momentum_operator, spin_operator, orbital_operator
+from .recoil_heating import TheoreticalTorqueRecoilHeating, TorqueRecoilHeating, InformationFlux
 from .optical_fields.laguerregauss import LaguerreGauss
 from .optical_fields.planewave import PlaneWave
 from . import parameters
@@ -15,20 +15,12 @@ __all__ = [
     "electric_field_amplitude_from_power",
     "evaluate_incident_field",
     "LightMatterInteraction",
-    "evaluate_internal_field",
-    "evaluate_near_field",
-    "evaluate_far_field",
-    "total_fields",
-    "maxwell_stress_tensor",
-    "spherical_integration_surface",
-    "evaluate_force",
-    "evaluate_torque",
-    "derivative_torque_spectral_density",
-    "force_spectral_density",
-    "torque_spectral_density",
+    "angular_momentum_operator",
+    "spin_operator",
+    "orbital_operator",
     "TheoreticalTorqueRecoilHeating",
-    "DerivativeTorqueRecoilHeating",
     "TorqueRecoilHeating",
+    "InformationFlux",
     "LaguerreGauss",
     "PlaneWave",
     "parameters",

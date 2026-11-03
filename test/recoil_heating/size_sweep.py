@@ -6,12 +6,11 @@ import os
 from pathlib import Path
 from time import perf_counter
 import numpy as np
-from scipy.constants import hbar
 from cases import plane_wave, lg_00, lg_01, lg_02
 from optomechanics_levitation import parameters as p
 from optomechanics_levitation.operators import spin_operator, orbital_operator
 from optomechanics_levitation.particle import particle_properties
-from optomechanics_levitation.recoil_heating import TheoreticalTorqueRecoilHeating, TorqueRecoilHeating
+from optomechanics_levitation.recoil_heating import InformationFlux, TheoreticalTorqueRecoilHeating, TorqueRecoilHeating
 
 BEAMS = {"plane_wave": plane_wave, "lg_00": lg_00, "lg_01": lg_01, "lg_02": lg_02}
 RESULT_COLUMNS = (
@@ -40,18 +39,6 @@ def particle_for_size(long_axis_nm: float, aspect_ratio: float) -> dict:
     return particle_properties(particle_type=p.PARTICLE_TYPE, material_name=p.MATERIAL, step_nm=step_nm, mesh=p.MESH, center=True,
         R1=long_radius_nm / step_nm - 0.2, R2=short_radius_nm / step_nm - 0.2, R3=short_radius_nm / step_nm - 0.2)
 
-def mean_scattering_rate(calculator) -> float:
-    """Integrate the unrotated scattered field to obtain Gamma_sc [s^-1]."""
-    positions_nm, _, domega = calculator._observation_surface("z")
-    incident_field = calculator._incident_field(calculator.positions_nm)
-    scattered_field = calculator._run_simulation(incident_field, positions_nm)
-    field_to_rate = TorqueRecoilHeating(calculator).field_to_rate
-    return float(field_to_rate * np.sum(np.sum(np.abs(scattered_field)**2, axis=-1) * domega))
-
-def d_mu(recoil_heating: float, gamma_sc: float) -> float:
-    """Use the paper's relation between torque recoil and information per photon."""
-    return float(2 * np.pi * recoil_heating / (hbar**2 * gamma_sc))
-
 def run_case(case_id: int) -> None:
     """Calculate every beam, axis, and aspect ratio for one particle size."""
     long_axis_nm = float(long_axis_values_nm()[case_id])
@@ -66,15 +53,20 @@ def run_case(case_id: int) -> None:
     for aspect_ratio in p.SIZE_SWEEP_ASPECT_RATIOS:
         particle = particle_for_size(long_axis_nm, aspect_ratio)
         print(f"[r={aspect_ratio:g}] dipoles={len(particle['geometry_nm'])}", flush=True)
-        theoretical = None
+        theoretical_model = None
         if aspect_ratio == 2.0:
             epsilon_r = particle["material"].epsilon(p.WAVELENGTH_NM).real
-            theoretical = TheoreticalTorqueRecoilHeating(long_axis_nm / 2, long_axis_nm / (2 * aspect_ratio), epsilon_r).compute(torque_axis="z")["total_torque"]
+            theoretical_model = TheoreticalTorqueRecoilHeating(long_axis_nm / 2, long_axis_nm / (2 * aspect_ratio), epsilon_r)
 
         for beam_name, beam in BEAMS.items():
             calculator = beam.transfer_amplitudes(particle)
+            theoretical = None
+            if beam_name == "plane_wave" and theoretical_model is not None:
+                electric_field = calculator._incident_field(calculator.center_nm[None, :])[0]
+                theoretical = theoretical_model.compute(electric_field_v_per_m=electric_field, torque_axis="z")["total_torque"]
             heating = TorqueRecoilHeating(calculator)
-            gamma_sc = mean_scattering_rate(calculator)
+            information = InformationFlux(calculator, rotation_axes=p.SIZE_SWEEP_TORQUE_AXES).compute()
+            gamma_sc = information["Gamma_sc"]
             for axis in p.SIZE_SWEEP_TORQUE_AXES:
                 print(f"[r={aspect_ratio:g}, {beam_name}, {axis}] transfer amplitudes", flush=True)
                 q_S = calculator.transfer_amplitude(spin_operator(axis))
@@ -95,7 +87,7 @@ def run_case(case_id: int) -> None:
                     "correlation_term": result["q_LS"],
                     "relative_difference": abs(simulation - theory) / abs(theory) if theory is not None else None,
                     "mean_scattering_rate": gamma_sc,
-                    "d_mu": d_mu(simulation, gamma_sc),
+                    "d_mu": information["D"][axis],
                 })
                 print(f"[r={aspect_ratio:g}, {beam_name}, {axis}] total={simulation:.6e}", flush=True)
 
@@ -126,12 +118,12 @@ def backfill_case(case_id: int) -> None:
     for aspect_ratio in p.SIZE_SWEEP_ASPECT_RATIOS:
         particle = particle_for_size(long_axis_nm, aspect_ratio)
         for beam_name, beam in BEAMS.items():
-            gamma_sc = mean_scattering_rate(beam.transfer_amplitudes(particle))
+            information = InformationFlux(beam.transfer_amplitudes(particle), rotation_axes=p.SIZE_SWEEP_TORQUE_AXES).compute()
             for row in rows:
                 if float(row["aspect_ratio"]) == aspect_ratio and row["beam"] == beam_name:
-                    row["mean_scattering_rate"] = gamma_sc
-                    row["d_mu"] = d_mu(float(row["simulation_recoil_heating"]), gamma_sc)
-            print(f"[SIZE {case_id + 1}, r={aspect_ratio:g}, {beam_name}] Gamma_sc={gamma_sc:.6e}", flush=True)
+                    row["mean_scattering_rate"] = information["Gamma_sc"]
+                    row["d_mu"] = information["D"][row["torque_axis"]]
+            print(f"[SIZE {case_id + 1}, r={aspect_ratio:g}, {beam_name}] Gamma_sc={information['Gamma_sc']:.6e}", flush=True)
 
     BACKFILL_DIR.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".tmp")

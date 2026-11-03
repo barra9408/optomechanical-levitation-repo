@@ -25,10 +25,7 @@ class TorqueRecoilHeating:
         return {"total_torque": float(S_tau_tau), "q_S": float(q_S), "q_L": float(q_L), "q_LS": float(q_LS)}
 
 class TheoreticalTorqueRecoilHeating:
-    """Point-dipole torque recoil heating for an x-polarized plane wave.
-
-    The plane-wave amplitude uses the optical power through the entrance pupil.
-    """
+    """Point-dipole torque recoil heating from the local incident field."""
     def __init__(self, long_radius_nm: float, short_radius_nm: float, epsilon_r: float, wavelength_nm: float = p.WAVELENGTH_NM) -> None:
         self.long_radius_nm = float(long_radius_nm); self.short_radius_nm = float(short_radius_nm)
         self.epsilon_r = float(epsilon_r); self.wavelength_nm = float(wavelength_nm)
@@ -43,17 +40,15 @@ class TheoreticalTorqueRecoilHeating:
         alpha_perpendicular = epsilon_0 * volume * (self.epsilon_r - 1) / (1 + L_perpendicular * (self.epsilon_r - 1))
         return alpha_parallel, alpha_perpendicular
     
-    def compute(self, *, torque_axis: Literal["x", "y", "z"] = p.TORQUE_AXIS) -> dict[str, float]:
-        """Return (Δα/α∥)² and recoil heating for the plane wave.
+    def compute(self, *, electric_field_v_per_m: NDArray[np.complex128],
+                torque_axis: Literal["x", "y", "z"] = p.TORQUE_AXIS) -> dict[str, float]:
+        """Return (Δα/α∥)² and recoil heating at the particle centre.
 
         The long particle axis is x. Rotating its dipole polarizability about
         ``torque_axis`` gives the induced-dipole derivative used here.
         """
         alpha_parallel, alpha_perpendicular = self._polarizabilities(); anisotropy_term = ((alpha_parallel - alpha_perpendicular) / alpha_parallel)**2
-        pupil_radius_nm = p.FOCAL_DISTANCE_NM * p.NUMERICAL_APERTURE / p.REFRACTIVE_INDEX
-        area_m2 = np.pi * (pupil_radius_nm * 1e-9)**2
-        electric_amplitude = np.sqrt(2 * p.OPTICAL_POWER_W / (p.REFRACTIVE_INDEX * epsilon_0 * c * area_m2))
-        electric_field = np.array((electric_amplitude, 0, 0), dtype=complex)
+        electric_field = np.asarray(electric_field_v_per_m, dtype=complex)
         long_axis = np.array((1.0, 0.0, 0.0))
         axis_vector = np.eye(3)["xyz".index(torque_axis)]
         rotated_axis_derivative = np.cross(axis_vector, long_axis)

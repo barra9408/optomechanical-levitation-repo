@@ -8,6 +8,8 @@ from .incident_field import (
 from .light_matter_interaction import LightMatterInteraction
 from .operators import angular_momentum_operator, spin_operator, orbital_operator
 from .recoil_heating import TheoreticalTorqueRecoilHeating, TorqueRecoilHeating, InformationFlux
+from .transfer_amplitudes import TransferAmplitudes, TransferOperator
+from .optical_fields.focused_fields import FocusedBeam
 from .optical_fields.laguerregauss import LaguerreGauss
 from .optical_fields.planewave import PlaneWave
 from . import constants, parameters
@@ -26,6 +28,9 @@ __all__ = [
     "TheoreticalTorqueRecoilHeating",
     "TorqueRecoilHeating",
     "InformationFlux",
+    "TransferAmplitudes",
+    "TransferOperator",
+    "FocusedBeam",
     "LaguerreGauss",
     "PlaneWave",
     "constants",

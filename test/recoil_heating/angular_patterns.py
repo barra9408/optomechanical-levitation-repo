@@ -16,7 +16,10 @@ ASPECT_RATIO = 4.0
 BEAMS = {"plane_wave": plane_wave, "lg_02": lg_02}
 CASES = tuple((beam_name, beam, long_axis_nm) for beam_name, beam in BEAMS.items()
               for long_axis_nm in LONG_AXES_NM)
-CSV_COLUMNS = ("surface", "direction_x", "direction_y", "direction_z", "spin", "orbital", "correlation", "total")
+CSV_COLUMNS = (
+    "surface", "direction_x", "direction_y", "direction_z",
+    "spin", "orbital", "correlation", "total",
+)
 OUTPUT_DIR = Path(__file__).resolve().parent
 
 
@@ -36,20 +39,23 @@ def run_case(case_id: int) -> None:
         step_nm=step_nm, mesh=p.MESH, center=True,
         R1=long_radius_nm / step_nm - 0.2,
         R2=short_radius_nm / step_nm - 0.2, R3=short_radius_nm / step_nm - 0.2)
-    print(f"[{beam_name}, {long_axis_nm:g} nm] dipoles={len(particle['geometry_nm'])}, torque=z", flush=True)
+    print(
+        f"[{beam_name}, {long_axis_nm:g} nm] dipoles={len(particle['geometry_nm'])}, torque=z",
+        flush=True)
 
     calculator = beam.transfer_amplitudes(particle)
-    q_S = calculator.transfer_amplitude(spin_operator("z"))
+    spin_transfer_amplitude = calculator.transfer_amplitude(spin_operator("z"))
     print(f"[{beam_name}, {long_axis_nm:g} nm] spin complete", flush=True)
-    q_L = calculator.transfer_amplitude(orbital_operator("z"))
+    orbital_transfer_amplitude = calculator.transfer_amplitude(orbital_operator("z"))
     print(f"[{beam_name}, {long_axis_nm:g} nm] orbital complete", flush=True)
 
     heating = TorqueRecoilHeating(calculator)
     scale = heating.field_to_rate / (2 * np.pi)
-    spin = scale * np.sum(np.abs(q_S)**2, axis=-1)
-    orbital = scale * np.sum(np.abs(q_L)**2, axis=-1)
-    correlation = 2 * scale * np.sum(np.conj(q_S) * q_L, axis=-1).real
-    total = spin + orbital + correlation
+    spin_term = scale * np.sum(np.abs(spin_transfer_amplitude)**2, axis=-1)
+    orbital_term = scale * np.sum(np.abs(orbital_transfer_amplitude)**2, axis=-1)
+    correlation_term = 2 * scale * np.sum(
+        np.conj(spin_transfer_amplitude) * orbital_transfer_amplitude, axis=-1).real
+    total = spin_term + orbital_term + correlation_term
 
     temporary = output.with_suffix(".tmp")
     with temporary.open("w", newline="") as file:
@@ -59,14 +65,15 @@ def run_case(case_id: int) -> None:
             direction = calculator.directions[index]
             writer.writerow({"surface": "scattered", "direction_x": direction[0],
                 "direction_y": direction[1], "direction_z": direction[2],
-                "spin": spin[index], "orbital": orbital[index],
-                "correlation": correlation[index], "total": total[index]})
+                "spin": spin_term[index], "orbital": orbital_term[index],
+                "correlation": correlation_term[index], "total": total[index]})
     temporary.replace(output)
     print(f"[{beam_name}, {long_axis_nm:g} nm] {total.size} directions saved in "
           f"{(perf_counter() - started) / 60:.1f} min: {output}", flush=True)
 
 
 def main() -> None:
+    """List cases or run one angular pattern from command-line arguments."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--case-id", type=int, help="Calculate one beam and particle size")
     parser.add_argument("--list-cases", action="store_true", help="List the four angular patterns")

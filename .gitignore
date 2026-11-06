@@ -1,7 +1,7 @@
 /.vscode/
 /shortcuts/
 /requests/
-/recoil_heating_paper/
+/outputs/
 __pycache__/
 *.py[cod]
 *.egg-info/

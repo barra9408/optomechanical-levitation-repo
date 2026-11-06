@@ -1,10 +1,10 @@
-# Optomechanical Levitation
+# Optomechanical Levitation Simulator
 
 This Python package brings together optical fields, particle geometry, and
 electromagnetic scattering for studies of levitated nanoparticles. It provides
 a consistent route from an incident beam to the field induced inside a particle
-and the field scattered into the surrounding space. The included applications
-use those fields to study angular-momentum transfer and torque recoil heating.
+and the field scattered into the surrounding space. These fields can be used
+to study optomechanical observables.
 
 ## Relation to pyGDM2
 
@@ -25,28 +25,30 @@ python -m pip install -e .
 ```
 
 This installs the package and its dependencies listed in `pyproject.toml`.
-Run the examples below from the repository root so that `cases/` is importable.
+The example below uses only the installed package.
 
 ## Quick start
 
-The following example creates a silica spheroid, evaluates a focused incident
-field at its dipoles, solves the light–matter interaction, and samples the
+The following example creates a silica spheroid, evaluates an incident plane
+wave at its dipoles, solves the light–matter interaction, and samples the
 scattered electric field at a distant observation point.
 
 ```python
 import numpy as np
-from cases import plane_wave
-from optomechanics_levitation import parameters
-from optomechanics_levitation.light_matter_interaction import LightMatterInteraction
-from optomechanics_levitation.particle import particle_properties
+import optomechanics_levitation as ol
 
-particle = particle_properties(
+wavelength_nm = 1550.0
+particle = ol.particle_properties(
     particle_type="spheroid", material_name="sio2", step_nm=10.0,
     mesh="cube", center=True, R1=4.8, R2=2.8, R3=2.8,
 )
-incident_electric_field = plane_wave.electric_field(particle["geometry_nm"])
-interaction = LightMatterInteraction(
-    particle, parameters.WAVELENGTH_NM, parameters.ENVIRONMENT)
+plane_wave = ol.PlaneWave(
+    wavelength_nm=wavelength_nm, power_w=0.1, pupil_radius_nm=1_000_000.0,
+)
+incident_electric_field = plane_wave.evaluate(
+    "electric_field", positions_nm=particle["geometry_nm"])
+environment = {"eps1": 1.0, "eps2": 1.0, "eps3": 1.0, "spacing": 0.0}
+interaction = ol.LightMatterInteraction(particle, wavelength_nm, environment)
 internal_electric_field = interaction.internal_field(incident_electric_field)
 
 observation_positions_nm = np.array([[0.0, 0.0, 1_000_000.0]])
@@ -55,20 +57,20 @@ print(internal_electric_field.shape, scattered_electric_field.shape)
 ```
 
 Positions and wavelengths are in nanometres; electric fields are in V/m.
+The plane-wave power is defined over the specified circular reference pupil.
 `internal_electric_field` has one three-component vector per particle dipole,
 and `scattered_electric_field` has one per observation point. See the
 [simulation workflow](docs/simulation_workflow.md) for the individual steps
 and field conventions.
 
-## Applications and examples
+## Simulation methods
 
-The four modules in [`cases/`](cases/) provide a focused plane-wave input and
-focused LG00, LG01, and LG02 inputs. Each exposes `electric_field(positions_nm)`
-and `transfer_amplitudes(particle)`. The latter supports angular-momentum
-operators; [`test/recoil_heating/`](test/recoil_heating/) contains research
-scripts and a notebook that use these cases to calculate torque recoil heating
-and orientation information. These scripts are computational applications,
-not a general automated test suite.
+The package provides plane-wave and Laguerre–Gauss fields, vector focusing,
+particle geometry, and light–matter interaction with near- and far-field
+evaluation. Transfer amplitudes and angular-momentum operators support
+calculations built on the scattered field. Recoil-heating classes provide
+one specialized use of these methods; the simulation workflow is not limited
+to that observable.
 
 ## Documentation
 
@@ -78,9 +80,12 @@ not a general automated test suite.
 
 ## Research using this software
 
-A manuscript using the torque recoil heating application is in preparation.
-Its publication link will be added here when available. Future papers that use
-this package can be listed in this section with their published links.
+A manuscript in preparation uses this simulator to study torque recoil heating
+of levitated nanoparticles. It applies transfer amplitudes and angular-momentum
+operators to recoil-related observables. The paper-specific sweeps and
+results are kept separate from the reusable package while the calculations
+are under review. A public citation and link will be added when available.
+Future papers using this software can be listed here with their published links.
 
 ## Citation, license, and contributions
 

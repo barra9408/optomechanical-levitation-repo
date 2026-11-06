@@ -45,8 +45,8 @@ complex vector fields on the **same outgoing grid** and can be subtracted
 direction by direction. Their phase must be retained when comparing or
 combining operators.
 
-For angular momentum, the paper derives this expression from a rotation of
-the particle. If $`\hat O_{J,\mu}`$ generates rotations about
+For angular momentum, this expression follows from a rotation of the
+particle. If $`\hat O_{J,\mu}`$ generates rotations about
 $`\hat{\mathbf e}_{\mu}`$, then
 
 $$
@@ -74,9 +74,9 @@ interpretation only under the physical assumptions appropriate to the chosen
 observable.
 
 The incident beam does not need one propagation direction. In particular,
-a focused beam contains a continuum of directions. In the supplied cases,
-the Richards-Wolf integral combines these directions into a callable
-$`\mathbf E_{\mathrm{in}}(\mathbf r)`$. The simulator evaluates that field at
+a focused beam contains a continuum of directions. The Richards-Wolf integral
+can combine these directions into a callable $`\mathbf E_{\mathrm{in}}(\mathbf r)`$.
+The simulator evaluates that field at
 the required positions; an operator that needs spatial derivatives can request
 it at nearby positions. The outgoing directions specify where $`\mathcal M_0`$
 is evaluated and how $`\hat O_{\mathrm{out}}`$ acts. No single incident direction
@@ -103,16 +103,19 @@ the original far field, and subtracts the two results. The returned array has
 shape `(n_theta, n_phi, 3)`. Its entries are amplitudes, not an integrated
 rate.
 
-Each case in `cases/` supplies a focused incident field and the common
-simulation settings. A prepared calculator can be used for several operators;
-its interaction-matrix factorization is reused. The four available cases are
-`plane_wave`, `lg_00`, `lg_01`, and `lg_02`.
+`TransferAmplitudes` accepts a particle, a callable that evaluates the
+incident electric field, and a parameter dictionary containing `wavelength_nm`,
+`environment`, and `amplitude_v_per_m`. A prepared calculator can be used for
+several operators; its interaction-matrix factorization is reused. The
+following example uses an unfocused plane wave with a finite reference pupil:
 
 ```python
-from cases import lg_01
+from optomechanics_levitation.optical_fields.planewave import PlaneWave
 from optomechanics_levitation.operators import angular_momentum_operator
 from optomechanics_levitation.particle import particle_properties
+from optomechanics_levitation.transfer_amplitudes import TransferAmplitudes
 
+wavelength_nm = 1550.0
 particle = particle_properties(
     particle_type="spheroid",
     material_name="sio2",
@@ -123,7 +126,20 @@ particle = particle_properties(
     R2=2.8,
     R3=2.8,
 )
-calculator = lg_01.transfer_amplitudes(particle)
+plane_wave = PlaneWave(
+    wavelength_nm=wavelength_nm, power_w=0.1, pupil_radius_nm=1_000_000.0,
+)
+
+def incident_field_generator(pos, env_dict, wavelength, returnField="E"):
+    return plane_wave.evaluate("electric_field", positions_nm=pos)
+
+parameters = {
+    "wavelength_nm": wavelength_nm,
+    "environment": {"eps1": 1.0, "eps2": 1.0, "eps3": 1.0, "spacing": 0.0},
+    "amplitude_v_per_m": 1.0,
+}
+calculator = TransferAmplitudes(
+    particle, incident_field_generator, parameters, n_theta=8, n_phi=16)
 delta_j = calculator.transfer_amplitude(angular_momentum_operator("z"))
 directions = calculator.directions
 weights = calculator.solid_angle_weights
@@ -132,34 +148,12 @@ weights = calculator.solid_angle_weights
 The operator's `axis` selects the polar axis; if it has no `axis` attribute,
 the grid uses $`z`$. The angular weights and directions are available after
 `transfer_amplitude` returns. A later call with another axis updates both
-arrays. The case fields are already normalized by `FocusedBeam` to the power
-specified in `parameters.py`; their wrapper uses
-`amplitude_v_per_m=1.0` to avoid rescaling them.
-To supply another beam directly, `TransferAmplitudes(particle, field_generator,
-parameters)` accepts the same particle dictionary, a field generator callable,
-and a parameter dictionary containing `wavelength_nm`, `environment`, and
-`amplitude_v_per_m`. The case modules assemble these inputs for their beams.
-The following is the equivalent direct construction for the field above;
-another electric-field callable can replace `lg_01.electric_field`.
+arrays. The wrapper uses `amplitude_v_per_m=1.0` because `PlaneWave` already
+sets the electric-field amplitude. Another callable can evaluate a focused
+field from `FocusedBeam` or a user-defined incident field. See
+[Optical fields](optical_fields.md) for those inputs.
 
-```python
-from optomechanics_levitation import parameters as cfg
-from optomechanics_levitation.transfer_amplitudes import TransferAmplitudes
-
-def incident_field_generator(pos, env_dict, wavelength, returnField="E"):
-    return lg_01.electric_field(pos)
-
-parameters = {
-    "wavelength_nm": cfg.WAVELENGTH_NM,
-    "environment": cfg.ENVIRONMENT,
-    "amplitude_v_per_m": 1.0,
-}
-calculator = TransferAmplitudes(particle, incident_field_generator, parameters)
-delta_j = calculator.transfer_amplitude(angular_momentum_operator("z"))
-```
-
-For the coherent, absorption-free scatterer in vacuum used by the recoil-heating
-application, the photon-flux factor is
+For a coherent, absorption-free scatterer in vacuum, the photon-flux factor is
 
 $$
 \kappa=\frac{\epsilon_0 cR^2}{2\hbar\omega},
@@ -176,7 +170,7 @@ $$
 `TransferAmplitudes` returns $`\Delta\mathbf q_O`$ and the grid weights needed
 for this integration; it does not calculate $`\mathcal Q_O`$ or a scattering rate.
 For the angular-momentum operator, $`\mathcal Q_J`$ is the torque recoil spectral
-density $`S_{\tau\tau}^{\mu}`$ under the paper's assumptions. The operator acts
+density $`S_{\tau\tau}^{\mu}`$ under those assumptions. The operator acts
 on the electric field with its physical units, including the factor $`\hbar`$;
 the returned amplitude is not divided by $`\hbar`$.
 
@@ -240,7 +234,7 @@ delta_j = calculator.transfer_amplitude(angular_momentum_operator("z"))
 
 ### Spin
 
-For a transverse monochromatic field, we use the spin operator of the paper,
+For a transverse monochromatic field, the spin operator used here is
 
 $$
 \hat O_{S,\mu}^{\mathrm{in}}\mathbf E
@@ -259,7 +253,7 @@ $$
 $$
 
 Here the current code uses $`k=2\pi/\lambda`$ with positions and wavelength in
-nanometres, as in the vacuum environment used by the cases.
+nanometres, as in the vacuum environment used in the example.
 
 ```python
 from optomechanics_levitation.operators import spin_operator
@@ -320,7 +314,6 @@ import numpy as np
 from optomechanics_levitation.constants import (
     METRES_PER_NANOMETRE, REDUCED_PLANCK_CONSTANT_J_S,
 )
-from cases import lg_01
 
 class LinearMomentumZ:
     axis = "z"
@@ -339,7 +332,6 @@ class LinearMomentumZ:
         return (REDUCED_PLANCK_CONSTANT_J_S * wave_number_per_m
                 * directions[..., 2, None] * scattered_electric_field)
 
-calculator = lg_01.transfer_amplitudes(particle)
 delta_pz = calculator.transfer_amplitude(LinearMomentumZ())
 ```
 

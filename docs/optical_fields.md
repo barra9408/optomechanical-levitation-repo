@@ -53,17 +53,21 @@ $$
 The aperture is imposed by `FocusedBeam`, not by the constant profile itself.
 
 ```python
-from optomechanics_levitation import parameters as cfg
 from optomechanics_levitation.optical_fields.planewave import PlaneWave
 import numpy as np
 
+wavelength_nm = 1550.0
+focal_distance_nm = 3_000_000.0
+numerical_aperture = 0.75
+refractive_index = 1.0
+power_w = 0.1
 positions_nm = np.array([[0.0, 0.0, 0.0]])
-pupil_radius_nm = cfg.FOCAL_DISTANCE_NM * cfg.NUMERICAL_APERTURE / cfg.REFRACTIVE_INDEX
+pupil_radius_nm = focal_distance_nm * numerical_aperture / refractive_index
 plane_wave = PlaneWave(
-    wavelength_nm=cfg.WAVELENGTH_NM,
-    power_w=cfg.OPTICAL_POWER_W,
+    wavelength_nm=wavelength_nm,
+    power_w=power_w,
     pupil_radius_nm=pupil_radius_nm,
-    refractive_index=cfg.REFRACTIVE_INDEX,
+    refractive_index=refractive_index,
 )
 plane_profile = plane_wave.evaluate("profile")
 incident_electric_field = plane_wave.evaluate(
@@ -113,7 +117,7 @@ At the entrance pupil, $z=0$, so $w=w_0$ and both the curvature and Gouy
 phases vanish. The mode is normalized by
 $\int_0^{2\pi}d\phi\int_0^\infty \rho\,d\rho\,|u_{p,\ell}|^2=1$.
 Thus $p=\ell=0$ gives the Gaussian mode, while $(p,\ell)=(0,1)$ and $(0,2)$
-give the first two helical modes used in the cases. The azimuthal phase
+give the first two helical modes illustrated here. The azimuthal phase
 $e^{i\ell\phi}$ carries the sign convention set by $e^{ikz-i\omega t}$.
 
 For a unit Jones vector $\hat{\mathbf e}=(e_x,e_y,0)$, the unfocused field is
@@ -132,18 +136,18 @@ vanishes for $|\ell|>0$ before the objective, even when its total power is
 nonzero.
 
 ```python
-from optomechanics_levitation import parameters as cfg
 from optomechanics_levitation.optical_fields.laguerregauss import LaguerreGauss
 import numpy as np
 
+entrance_waist_nm = 1_000_000.0
 positions_nm = np.array([[0.0, 0.0, 0.0]])
 lg = LaguerreGauss(
-    waist_radius_nm=cfg.ENTRANCE_WAIST_NM,
+    waist_radius_nm=entrance_waist_nm,
     radial_index=0,
     azimuthal_index=1,
-    wavelength_nm=cfg.WAVELENGTH_NM,
-    power_w=cfg.OPTICAL_POWER_W,
-    refractive_index=cfg.REFRACTIVE_INDEX,
+    wavelength_nm=wavelength_nm,
+    power_w=power_w,
+    refractive_index=refractive_index,
 )
 lg_profile = lg.evaluate("profile")
 incident_electric_field = lg.evaluate(
@@ -209,36 +213,21 @@ the integral satisfies the full Helmholtz equation in the focal region.
 The following example continues with the LG profile and position defined above.
 
 ```python
-from optomechanics_levitation import parameters as cfg
 from optomechanics_levitation.optical_fields.focused_fields import FocusedBeam
 
 focus = FocusedBeam(
-    wavelength_nm=cfg.WAVELENGTH_NM,
-    focal_distance_nm=cfg.FOCAL_DISTANCE_NM,
-    n_theta=cfg.FOCUS_N_THETA,
-    n_phi=cfg.FOCUS_N_PHI,
-    numerical_aperture=cfg.NUMERICAL_APERTURE,
-    power_w=cfg.OPTICAL_POWER_W,
-    refractive_index=cfg.REFRACTIVE_INDEX,
+    wavelength_nm=wavelength_nm,
+    focal_distance_nm=focal_distance_nm,
+    n_theta=16,
+    n_phi=32,
+    numerical_aperture=numerical_aperture,
+    power_w=power_w,
+    refractive_index=refractive_index,
 )
 focused_electric_field = focus.electric_field(
     positions_nm, lg_profile, polarization=(1.0, 0.0))
 ```
 
-For repeated calculations, the four case modules already assemble these
-objects with the shared settings in `parameters.py`:
-
-```python
-import numpy as np
-from cases import plane_wave, lg_00, lg_01, lg_02
-
-positions_nm = np.array([[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]])
-plane_wave_electric_field = plane_wave.electric_field(positions_nm)
-lg_01_electric_field = lg_01.electric_field(positions_nm)
-```
-
-Each case also exposes `beam` and `profile`; the shared `focused_beam` is in
-`cases._common`. The default optical power is `OPTICAL_POWER_W = 0.1` W.
 The `PlaneWave` power parameter refers to its reference pupil, the
 `LaguerreGauss` power parameter to the entire incident beam, and the
 `FocusedBeam` power parameter to the power admitted by the objective.
@@ -258,22 +247,21 @@ already specify the local polarization.
 
 ```python
 import numpy as np
-from optomechanics_levitation import parameters as cfg
 from optomechanics_levitation.optical_fields.focused_fields import FocusedBeam
 
 focus = FocusedBeam(
-    wavelength_nm=cfg.WAVELENGTH_NM,
-    focal_distance_nm=cfg.FOCAL_DISTANCE_NM,
-    n_theta=cfg.FOCUS_N_THETA,
-    n_phi=cfg.FOCUS_N_PHI,
-    numerical_aperture=cfg.NUMERICAL_APERTURE,
-    power_w=cfg.OPTICAL_POWER_W,
-    refractive_index=cfg.REFRACTIVE_INDEX,
+    wavelength_nm=wavelength_nm,
+    focal_distance_nm=focal_distance_nm,
+    n_theta=16,
+    n_phi=32,
+    numerical_aperture=numerical_aperture,
+    power_w=power_w,
+    refractive_index=refractive_index,
 )
 positions_nm = np.array([[0.0, 0.0, 0.0], [100.0, 0.0, 0.0]])
 
 def scalar_profile(rho_nm, phi):
-    radius = rho_nm / cfg.ENTRANCE_WAIST_NM
+    radius = rho_nm / entrance_waist_nm
     envelope = radius * np.exp(-radius**4)
     return envelope * np.exp(1j * phi)
 
@@ -281,7 +269,7 @@ scalar_electric_field = focus.electric_field(
     positions_nm, scalar_profile, polarization=(1.0, 1j))
 
 def radial_profile(rho_nm, phi):
-    radius = rho_nm / cfg.ENTRANCE_WAIST_NM
+    radius = rho_nm / entrance_waist_nm
     envelope = radius * np.exp(-radius**2)
     return envelope[..., None] * np.stack((np.cos(phi), np.sin(phi)), axis=-1)
 
